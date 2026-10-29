@@ -113,7 +113,7 @@ async function getJSON(path, ms) {
   } finally { clearTimeout(t); }
 }
 async function getDeals() {
-  const [live, own] = await Promise.allSettled([getJSON(LIVE + "deals.json", 6000), getJSON("/data/deals.json")]);
+  const [live, own] = await Promise.allSettled([getJSON(LIVE + "deals.json", 3500), getJSON("/data/deals.json")]);
   const ok = (x) => x.status === "fulfilled" && x.value?.updated;
   if (ok(live) && (!ok(own) || live.value.updated > own.value.updated)) { DATA = LIVE; return live.value; }
   if (own.status === "rejected") throw own.reason;
@@ -155,6 +155,8 @@ async function load() {
     renderCats(); render(); renderCoupons(); renderPreorder();
     if (state.q) renderResults();
     else if (!current) applyScroll();
+    // البحث يجهز في وقت الفراغ بعد ظهور الصفحة، فأول حرف يُكتب يعطي نتائج فورًا (إلا مع توفير البيانات)
+    if (!navigator.connection?.saveData) (window.requestIdleCallback || setTimeout)(() => loadIndex(), { timeout: 4000 });
   } catch (e) {
     $("grid").innerHTML = `<div class="empty"><h3>تعذّر تحميل البيانات</h3><p>تحقق من الاتصال وحاول مرة ثانية.</p><button class="btn3d primary" type="button" data-retry>إعادة المحاولة</button></div>`;
     $("result-count").textContent = "";
@@ -177,8 +179,20 @@ setInterval(showUpdated, 60000);
 // فهرس كل المنتجات المرصودة: يُحمّل عند أول استخدام للبحث فقط
 function loadIndex() {
   if (!indexing) {
-    indexing = pickSource().catch(() => null).then(() => getJSON(DATA + "index.json")).then((d) => {
-      index = d.items.map(([id, n, m, p, st, b]) => ({ id, n, m, p, st, b, nk: norm(n), key: norm(`${n} ${m} ${b || ""} ${id}`), mk: compact(m) }));
+    // الفهرس الكامل من Cloudflare (مضغوط، أخف بكثير)، ثم ما تغيّر بعده من live
+    indexing = pickSource().catch(() => null).then(() => Promise.all([
+      getJSON("/data/index.json").catch(() => getJSON(DATA + "index.json")),
+      DATA === LIVE ? getJSON(LIVE + "recent.json", 6000).catch(() => null) : null,
+    ])).then(async ([d, rec]) => {
+      const rows = new Map(d.items.map((x) => [x[0], x]));
+      if (rec && rec.updated > d.updated) for (const x of rec.items) rows.set(x[0], x);
+      // على دفعات حتى لا تتجمد الصفحة أثناء الكتابة (أكثر من 30 ألف منتج)
+      const out = [];
+      for (const [id, n, m, p, st, b] of rows.values()) {
+        out.push({ id, n, m, p, st, b, nk: norm(n), key: norm(`${n} ${m} ${b || ""} ${id}`), mk: compact(m) });
+        if (out.length % 2000 === 0) await new Promise((r) => setTimeout(r));
+      }
+      index = out;
       return index;
     }).catch(() => { indexing = null; return null; });
   }
@@ -779,6 +793,12 @@ document.addEventListener("click", async (e) => {
     go(a.getAttribute("href"));
     return;
   }
+  // البطاقة كلها تفتح صفحة المنتج، ما عدا أزرارها وروابطها
+  const cardEl = e.target.closest(".card:not(.skeleton)");
+  if (cardEl && !e.target.closest("a, button") && !String(getSelection())) {
+    const l = cardEl.querySelector("a.name[data-link]");
+    if (l) { go(l.getAttribute("href")); return; }
+  }
   const b = e.target.closest("button");
   if (!b) return;
   if (b.dataset.dept) { state.dept = b.dataset.dept; state.cat = "all"; state.limit = PAGE; render(); syncHomeUrl(); }
@@ -797,6 +817,13 @@ document.addEventListener("click", async (e) => {
     catch { toast("الكود: " + b.dataset.copy); }
   }
 });
+// صفحة المنتج تبدأ التحميل من أول لمسة، قبل اكتمال النقرة
+document.addEventListener("pointerdown", (e) => {
+  const l = e.target.closest?.("a[data-link], .card:not(.skeleton)");
+  const href = l && (l.matches("a") ? l : l.querySelector("a.name[data-link]"))?.getAttribute("href");
+  const m = href && href.match(/^\/p\/([^/?]+)/);
+  if (m) shard(decodeURIComponent(m[1]).toUpperCase()).catch(() => {});
+}, { passive: true });
 document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (e) => {
   if (e.target !== d) return;
   const r = d.getBoundingClientRect();

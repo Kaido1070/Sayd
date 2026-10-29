@@ -589,8 +589,10 @@ def main(argv=None):
     site_hash = dashboard.template_hash()
     publish_site = runner.due("last_site_at", sc["publish_every_minutes"] * 60, 10 * 60) or db.get("site_hash") != site_hash
     built = False
+    last_site = db.get("last_site_at")  # الفهرس المنشور في Cloudflare من هذا الوقت
+    since = max(x for x in (ts_minus(now(), days=2), last_site and ts_minus(last_site, minutes=15)) if x)
     try:
-        dashboard.build(db, cfg, data / "site")
+        dashboard.build(db, cfg, data / "site", since=since)
         built = True
         if publish_site:
             db.set("last_site_at", now())

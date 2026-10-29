@@ -192,7 +192,12 @@ def offers_payload(db, ts):
     return out
 
 
-def build(db, cfg, out):
+def _index_row(r):
+    return [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0),
+            "" if (r["brand"] or "") in JUNK_BRANDS else r["brand"] or ""]
+
+
+def build(db, cfg, out, since=None):
     ts = now()
     out = Path(out)
     tmp = out.with_name(out.name + ".tmp")
@@ -217,10 +222,14 @@ def build(db, cfg, out):
     _dump(tmp / "data" / "summary.json", {})
 
     # فهرس البحث لكل المنتجات (يُحمّل عند أول بحث فقط): [الرمز، الاسم، الموديل، السعر، الحالة، العلامة]
+    cols = "sku, name, model, price, in_stock, delisted, brand"
     _dump(tmp / "data" / "index.json", {"updated": ts, "items": [
-        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0),
-         "" if (r["brand"] or "") in JUNK_BRANDS else r["brand"] or ""]
-        for r in db.conn.execute("SELECT sku, name, model, price, in_stock, delisted, brand FROM products ORDER BY sku")]})
+        _index_row(r) for r in db.conn.execute(f"SELECT {cols} FROM products ORDER BY sku")]})
+    # ما تغيّر منذ آخر نشر للموقع: الفهرس الكامل (5 ميجا) يُحمّل مضغوطًا من Cloudflare،
+    # وهذا الملف الصغير من live يحدّث أسعاره وحالاته
+    _dump(tmp / "data" / "recent.json", {"updated": ts, "items": [
+        _index_row(r) for r in db.conn.execute(
+            f"SELECT {cols} FROM products WHERE last_changed>=? ORDER BY sku", (since or ts,))]})
     # صفحة كل منتج: ملف صغير مشترك بين ~33 منتجاً يُحمّل عند فتح الصفحة فقط
     for key, recs in product_records(db, current).items():
         _dump(tmp / "data" / "p" / f"{key}.json", recs)

@@ -151,6 +151,7 @@ h1,h2,h3{margin:0;line-height:1.5;overflow-wrap:anywhere}
 .card:after{content:"";position:absolute;inset:0;border-radius:inherit;pointer-events:none;opacity:0;transition:opacity .25s;
   background:radial-gradient(420px circle at var(--mx) var(--my),#ffffff26,transparent 45%)}
 .card:hover{box-shadow:var(--shadow-lg);border-color:var(--line-2)}
+.card:not(.skeleton){cursor:pointer}
 .card:hover:after{opacity:1}
 .pic{position:relative;display:block;margin:10px 10px 0;aspect-ratio:1;border-radius:14px;background:var(--plate);overflow:hidden;box-shadow:inset 0 0 0 1px #0000000a}
 .pic img{width:100%;height:100%;object-fit:contain;padding:14px;display:block;transition:transform .35s ease}
