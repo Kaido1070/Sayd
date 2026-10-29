@@ -35,8 +35,11 @@ FIELDS = ",".join([
     "productStatusAr", "brandAr",
 ])
 
-SORT_CODE = "productCode asc"           # ترتيب ثابت للمسح الكامل القابل للاستكمال
+SORT_CODE = "productCode asc"           # ترتيب ثابت يسمح بالاستكمال
 SORT_DISCOUNT = "priceValueDiscountPercentage desc"
+# كل منتج عليه أي خصم أو علامة عرض أو شارة (كاش باك، هدية، عرض بنك...)
+OFFERS_FILTER = 'priceValueDiscountPercentage:[0.01 TO 100] OR offersFacet_uFilter:* OR productStatusAr_uFilter:*'
+SITEMAP_INDEX = f"{BASE}/{LOCALE}/sitemap.xml"
 
 
 class SiteChanged(FetchError):
@@ -77,6 +80,7 @@ class ProductPage:
     was_price: float | None
     in_stock: bool | None
     offers: list
+    product: Product | None = None   # منتج كامل لمن لا يظهر في محرك البحث
 
 
 def _num(v):
@@ -137,10 +141,12 @@ class Extra:
         return f"{u['url'].rstrip('/')}/{u['apiKey']}/{u['siteKey']}/{kind}"
 
     # ---------- قوائم المنتجات ----------
-    def listing(self, start=0, *, category=None, skus=None, sort=SORT_CODE):
+    def listing(self, start=0, *, category=None, skus=None, where=None, sort=SORT_CODE):
         """صفحة من 100 منتج. يرجع (العدد الكلي، المنتجات، عدد المنتجات التي فشل تحليلها)."""
         params = {"rows": PAGE_SIZE, "start": start, "fields": FIELDS, "sort": sort}
         filters = ['type:"PRODUCT"']
+        if where:
+            filters.append(where)
         if skus:
             filters.append(" OR ".join(f'productCode:"{s}"' for s in skus))
         if category:
@@ -212,6 +218,22 @@ class Extra:
         disc = _num((d.get("discountPrice") or {}).get("value"))
         base = _num((d.get("price") or {}).get("value"))
         stock_code = ((d.get("stock") or {}).get("stockLevelStatus") or {}).get("code")
+        if "stockAvailableForHD" in d:   # "متوفر" = قابل للتوصيل، مثل قوائم البحث
+            stock = bool(d["stockAvailableForHD"]) and stock_code != "outOfStock"
+        else:
+            stock = None if stock_code is None else stock_code != "outOfStock"
+        price = disc or base
+        cats = [c.get("name", "").strip() for c in d.get("categories") or []
+                if re.match(r"^\d+(-\d+)*$", str(c.get("code", ""))) and c.get("name")]
+        product = None
+        if d.get("name"):
+            product = Product(
+                sku=sku, name=_text(d["name"]), category=" > ".join(cats),
+                category_codes=[str(c.get("code")) for c in d.get("categories") or [] if c.get("code")],
+                url=BASE + "/" + LOCALE + d["url"] if str(d.get("url", "")).startswith("/") else url,
+                price=price, was_price=base if disc and base and base > disc else None,
+                in_stock=bool(stock), marketplace=bool(d.get("marketPlaceProduct")) or sku.startswith("MP"),
+            )
         offers = []
         for b in d.get("bankPromotionDetails") or []:
             text = _text(b.get("bankHtmlMessage"))
@@ -260,11 +282,30 @@ class Extra:
                                    source="bank", text=text, code=str(coupon.get("code") or "")))
         return ProductPage(
             sku=sku,
-            price=disc or base,
+            price=price,
             was_price=base if disc and base and base > disc else None,
-            in_stock=None if stock_code is None else stock_code != "outOfStock",
+            in_stock=stock,
             offers=offers,
+            product=product,
         )
+
+    # ---------- خريطة الموقع ----------
+    def sitemap_products(self):
+        """كل روابط المنتجات في خريطة الموقع: {sku: url}. تُستخدم لاكتشاف ما لا يظهر في محرك البحث."""
+        index = self.http.get(SITEMAP_INDEX).text
+        files = [u for u in re.findall(r"<loc>\s*([^<\s]+)\s*</loc>", index) if "/Product-" in u]
+        if not files:
+            raise SiteChanged("خريطة الموقع لا تحتوي ملفات منتجات")
+        out = {}
+        for f in files:
+            try:
+                xml = self.http.get(f).text
+            except FetchError as e:
+                log.warning("تعذّر قراءة %s: %s", f.rsplit("/", 1)[-1], e)
+                continue
+            for url, sku in re.findall(r"<loc>\s*([^<\s]+/p/([0-9A-Za-z]+))\s*</loc>", xml):
+                out[sku] = url
+        return out
 
     # ---------- البنرات ----------
     def banners(self, paths):

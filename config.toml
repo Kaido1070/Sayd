@@ -9,12 +9,13 @@ user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTM
 delay_min = 1.0               # ثواني بين الطلبات
 delay_max = 3.0
 max_run_minutes = 300         # يتوقف بهدوء قبل حد GitHub (360) ويكمل لاحقاً
-hot_every_minutes = 120       # فحص العروض والأعلى خصماً (كل تشغيل يُنشر = بناء في Cloudflare؛ الحد المجاني 500/شهر)
-full_every_hours = 4          # مسح الكتالوج كامل (~15 دقيقة)
-hot_categories = ["offers", "last-piece-deals"]
-hot_top_discount_pages = 10   # صفحات (100 منتج) من الأعلى خصماً في الكتالوج
-pdp_per_run = 40              # صفحات منتجات تُفتح لكل تشغيل لاستخراج نصوص العروض
-pdp_recheck_hours = 72
+hot_every_minutes = 60        # مسح كل المنتجات التي عليها خصم أو عرض (~25 ألف، ~10 دقائق)
+full_every_hours = 4          # مسح الكتالوج كامل + المنتجات التي لا تظهر في البحث (~25 دقيقة)
+publish_every_minutes = 120   # تحديث اللوحة (كل نشر = بناء في Cloudflare؛ الحد المجاني 500/شهر)
+pdp_per_run = 100             # صفحات منتجات تُفتح لكل تشغيل لاستخراج أكواد وعروض البنوك
+pdp_recheck_hours = 48
+sitemap_every_hours = 24      # تحديث قائمة صفحات المنتجات من خريطة الموقع
+sitemap_mp_batch = 60         # صفحات بائعين خارجيين قديمة تُتحقق منها بالتدريج في كل مسح كامل
 banner_pages = ["/ar-sa/", "/ar-sa/promotions"]
 
 [alerts]
@@ -22,6 +23,7 @@ min_drop_pct = 5.0            # نزول عام
 low_window_days = 30          # أقل سعر خلال هذه المدة
 low_min_drop_pct = 1.0        # أقل نزول يُعتبر لشرط "أقل سعر خلال 30 يوم" (يمنع الإزعاج من فروق هللات)
 digest_threshold = 6          # أكثر من هذا العدد = رسالة ملخص
+verify_max = 80               # أقصى عدد نزولات يُتحقق منها من صفحة المنتج قبل التنبيه
 digest_max_items = 40
 alert_bundle_offers = false   # عروض "اشترِ X ووفّر على Y"
 min_price = 1                 # تجاهل الأسعار الأقل

@@ -9,11 +9,12 @@ from pathlib import Path
 
 from . import alerts, config, dashboard, offers
 from .db import DB, now, parse_ts, ts_minus
-from .extra import PAGE_SIZE, SORT_DISCOUNT, Extra, RawOffer, SiteChanged
+from .extra import OFFERS_FILTER, PAGE_SIZE, Extra, RawOffer, SiteChanged
 from .net import Blocked, Disallowed, FetchError, Http
 from .notify import Notifier
 
 log = logging.getLogger("sayd")
+OVERLAP = 5  # تداخل الصفحات
 
 
 class Runner:
@@ -29,6 +30,8 @@ class Runner:
         self.last_error = ""
         self.watch = cfg["watch"]
         self.badge_skus = {}
+        self.to_verify = []
+        self.blocked = 0
 
     # ---------- مساعدات ----------
     def left(self):
@@ -60,7 +63,7 @@ class Runner:
         return total, products
 
     def process(self, products):
-        """يسجل المنتجات ويضع التنبيهات في الطابور (بعد المسح الأول فقط)."""
+        """يسجل المنتجات؛ نزول السعر يُجمع للتحقق منه قبل التنبيه (بعد المسح الأول فقط)."""
         ts = now()
         alerting = self.baseline_done
         watched = self.watched_skus
@@ -78,73 +81,115 @@ class Runner:
             if not alerting:
                 continue
             pa = alerts.price_alert(ch, self.cfg, self.watch)
-            if pa and self.db.queue_alert("price", ch.sku, ch.new_price, pa, ts):
-                self.stats["alerts"] += 1
+            if pa:
+                self.to_verify.append((ch, pa))
             ra = alerts.restock_alert(ch, watched)
             if ra and self.db.queue_alert("restock", ch.sku, ch.history_id, ra, ts):
                 self.stats["alerts"] += 1
         self.db.commit()
 
     # ---------- المراحل ----------
-    def full_scan(self):
-        st = self.db.get("full_scan") or {"start": 0, "started_at": now(), "pages_ok": 0, "total": None}
-        self.phases.append(f"full@{st['start']}")
-        log.info("مسح كامل من الموضع %d", st["start"])
-        fails = 0
+    def paged_scan(self, label, where=None, state_key=None):
+        """يمر على كل صفحات الاستعلام. الصفحات متداخلة بـ OVERLAP منتجات حتى لا يضيع منتج
+        إذا انحذف منتج قبله أثناء المسح. state_key يحفظ نقطة التوقف للاستكمال في التشغيل التالي."""
+        st = (self.db.get(state_key) if state_key else None) or {"start": 0, "started_at": now(), "total": None}
+        log.info("%s: من الموضع %d", label, st["start"])
+        seen, fails = set(), 0
         while self.left() > 90:
-            total, products = self.listing(f"full start={st['start']}", start=st["start"])
+            total, products = self.listing(f"{label} start={st['start']}", start=st["start"], where=where)
             if total is None:
                 fails += 1
                 if fails >= 3:
                     break
                 continue
             fails = 0
-            self.process(products)
-            st.update(start=st["start"] + PAGE_SIZE, total=total, pages_ok=st["pages_ok"] + 1)
-            self.db.set("full_scan", st)
-            self.db.commit()
-            if st["start"] >= total:
-                self._full_done(st)
-                return True
-        log.info("توقف المسح الكامل عند %d/%s وسيكمل لاحقاً", st["start"], st["total"])
-        return False
+            fresh = [p for p in products if p.sku not in seen]
+            seen.update(p.sku for p in products)
+            self.process(fresh)
+            st["total"] = total
+            if st["start"] + PAGE_SIZE >= total:
+                if state_key:
+                    self.db.set(state_key, None)
+                return st, True
+            st["start"] += PAGE_SIZE - OVERLAP
+            if state_key:
+                self.db.set(state_key, st)
+                self.db.commit()
+        log.info("%s: توقف عند %d/%s وسيكمل لاحقاً", label, st["start"], st["total"])
+        return st, False
 
-    def _full_done(self, st):
+    def full_scan(self):
+        st = self.db.get("full_scan")
+        self.phases.append(f"full@{st['start'] if st else 0}")
+        st, done = self.paged_scan("مسح كامل", state_key="full_scan")
+        if not done:
+            return
+        seen = self.db.conn.execute("SELECT COUNT(*) FROM products WHERE last_seen>=?", (st["started_at"],)).fetchone()[0]
+        if seen < st["total"]:
+            self.error("full", f"اكتمل المسح لكن ظهر {seen} من {st['total']} منتج")
+        self.sitemap_pass(st["started_at"])
         ts = now()
-        if st["total"] and st["pages_ok"] * PAGE_SIZE >= 0.9 * st["total"]:
+        if st["total"] and seen >= 0.9 * st["total"]:
             n = self.db.delist_unseen(st["started_at"], ts)
             if n:
                 log.info("%d منتج لم يعد ظاهراً في الكتالوج", n)
-        self.db.set("full_scan", None)
         self.db.set("last_full_done_at", ts)
+        self.db.set("last_hot_at", ts)  # المسح الكامل يشمل كل العروض
         if not self.baseline_done:
             self.db.set("baseline_done", True)
             self.db.set("baseline_done_at", ts)
             log.info("اكتمل المسح الأول (تأسيس الأسعار) — التنبيهات تبدأ من التشغيل القادم")
         self.db.commit()
 
-    def hot_scan(self):
+    def sitemap_pass(self, since):
+        """منتجات لها صفحات حية في الموقع لكن محرك البحث لا يرجعها: تُفحص من صفحاتها مباشرة."""
         sc = self.cfg["scan"]
-        self.phases.append("hot")
-        for cat in sc["hot_categories"]:
-            start = 0
-            while self.left() > 120 and start < 60 * PAGE_SIZE:
-                total, products = self.listing(f"hot {cat}", start=start, category=cat, sort=SORT_DISCOUNT)
-                if total is None:
-                    break
-                self.process(products)
-                start += PAGE_SIZE
-                if start >= total:
-                    break
-        for i in range(sc["hot_top_discount_pages"]):
+        if self.due("last_sitemap_at", sc["sitemap_every_hours"] * 3600, 30 * 60):
+            try:
+                mapping = self.ex.sitemap_products()
+            except FetchError as e:
+                self.error("sitemap", e)
+                mapping = None
+            if mapping:
+                self.db.replace_sitemap(mapping)
+                self.db.set("last_sitemap_at", now())
+                self.db.commit()
+        rows = self.db.sitemap_unseen(since, now(), sc["sitemap_mp_batch"])
+        self.phases.append(f"sitemap:{len(rows)}")
+        blocked = 0
+        for sku, url in rows:
             if self.left() < 120:
                 break
-            total, products = self.listing("hot top-discount", start=i * PAGE_SIZE, sort=SORT_DISCOUNT)
-            if total is None:
-                break
-            self.process(products)
-        self.watch_scan()
-        self.db.set("last_hot_at", now())
+            ts = now()
+            try:
+                page = self.ex.product_page(url)
+            except Blocked as e:
+                blocked += 1
+                self.error(f"sitemap {sku}", e)
+                if blocked >= 3:
+                    break
+                continue
+            except Disallowed:  # robots.txt يمنعها (صفحات خدمات الضمان مثلاً)
+                self.db.mark_sitemap(sku, ts, dead_days=30)
+                continue
+            except FetchError as e:
+                if e.status in (404, 410):  # صفحة محذوفة: لا تُعاد قبل مدة
+                    self.db.mark_sitemap(sku, ts, dead_days=7 if not sku.startswith("MP") else 30)
+                else:
+                    self.error(f"sitemap {sku}", e)
+                continue
+            self.db.mark_sitemap(sku, ts)
+            if page.product and page.product.sku == sku:
+                self.process([page.product])
+            self.handle_page(sku, page)
+            self.db.commit()
+
+    def offers_scan(self):
+        """كل منتج عليه خصم أو علامة عرض أو شارة — وليس فقط الأعلى خصماً."""
+        self.phases.append("offers")
+        st, done = self.paged_scan("مسح العروض", where=OFFERS_FILTER)
+        if done:
+            self.db.set("last_hot_at", now())
         self.db.commit()
 
     def watch_scan(self):
@@ -155,42 +200,67 @@ class Runner:
             _, products = self.listing("watch", skus=skus[i:i + 50])
             self.process(products)
 
+    def handle_page(self, sku, page):
+        """يحفظ العروض المستخرجة من صفحة منتج."""
+        self.pdp_ok += 1
+        ts = now()
+        self.db.mark_pdp(sku, ts)
+        alerting = self.baseline_done and bool(self.db.get("offers_baseline_done", False))
+        for raw in page.offers:
+            self.save_offer(raw, [sku], ts, alerting)
+
+    def fetch_page(self, sku, url):
+        try:
+            return self.ex.product_page(url)
+        except Blocked as e:
+            self.blocked += 1
+            self.error(f"pdp {sku}", e)
+        except SiteChanged as e:
+            self.pdp_changed += 1
+            self.error(f"pdp {sku}", e)
+        except (FetchError, Disallowed) as e:
+            self.error(f"pdp {sku}", e)
+        return None
+
     def pdp_scan(self):
         sc = self.cfg["scan"]
         ts = now()
         explicit = [str(w["sku"]) for w in self.watch if w.get("sku")]
         skus = self.db.products_for_pdp(sc["pdp_per_run"], ts_minus(ts, hours=sc["pdp_recheck_hours"]), explicit)
         self.phases.append(f"pdp:{len(skus)}")
-        alerting = self.baseline_done and bool(self.db.get("offers_baseline_done", False))
-        blocked = 0
         for sku in skus:
-            if self.left() < 120:
+            if self.left() < 120 or self.blocked >= 3:
                 break
-            row = self.db.product(sku)
-            try:
-                page = self.ex.product_page(row["url"])
-            except Blocked as e:
-                blocked += 1
-                self.error(f"pdp {sku}", e)
-                if blocked >= 3:
-                    log.warning("توقف فتح صفحات المنتجات لهذا التشغيل (حظر متكرر)")
-                    break
-                continue
-            except SiteChanged as e:
-                self.pdp_changed += 1
-                self.error(f"pdp {sku}", e)
-                continue
-            except (FetchError, Disallowed) as e:
-                self.error(f"pdp {sku}", e)
-                continue
-            self.pdp_ok += 1
-            ts = now()
-            self.db.mark_pdp(sku, ts)
-            for raw in page.offers:
-                self.save_offer(raw, [sku], ts, alerting)
-            self.db.commit()
+            page = self.fetch_page(sku, self.db.product(sku)["url"])
+            if page:
+                self.handle_page(sku, page)
+                self.db.commit()
         if self.pdp_ok:
             self.db.set("offers_baseline_done", True)
+
+    def verify_prices(self):
+        """قبل إرسال تنبيه النزول: يفتح صفحة المنتج ويتأكد أن السعر المعروض للمشتري هو نفسه."""
+        items = sorted(self.to_verify, key=lambda x: -x[1]["drop_pct"])
+        self.to_verify = []
+        limit = self.cfg["alerts"]["verify_max"]
+        for n, (ch, pa) in enumerate(items):
+            page = None
+            if n < limit and self.left() > 60 and self.blocked < 3:
+                page = self.fetch_page(ch.sku, ch.url)
+            if page and page.price is not None:
+                self.handle_page(ch.sku, page)
+                if abs(page.price - ch.new_price) > 0.5:
+                    log.info("سعر %s في الصفحة %s يختلف عن البحث %s", ch.sku, page.price, ch.new_price)
+                    if page.price >= (ch.old_price or 0):
+                        continue  # النزول غير مؤكد؛ المسح القادم سيلتقطه إن كان حقيقياً
+                    ch.new_price = page.price
+                    pa = alerts.price_alert(ch, self.cfg, self.watch)
+                    if not pa:
+                        continue
+                pa["verified"] = True
+            if self.db.queue_alert("price", ch.sku, pa["new"], pa, now()):
+                self.stats["alerts"] += 1
+        self.db.commit()
 
     def banner_scan(self):
         self.phases.append("banners")
@@ -281,12 +351,15 @@ class Runner:
             found = self.ex.discover()
             if found and found != self.db.get("unbxd"):
                 self.db.set("unbxd", found)
-        if hot_due:
-            self.hot_scan()
+        if full_due:
+            self.full_scan()           # يشمل كل المنتجات بما فيها العروض
+        elif hot_due:
+            self.offers_scan()
+        if self.baseline_done and (full_due or hot_due):
+            self.watch_scan()
             self.pdp_scan()
             self.banner_scan()
-        if full_due:
-            self.full_scan()
+            self.verify_prices()
         self.badge_offers()
         ts = now()
         self.db.expire_offers(ts, ts_minus(ts, days=4))
@@ -360,16 +433,23 @@ def main(argv=None):
                   changes=runner.stats["changes"], alerts=runner.stats["alerts"],
                   errors=runner.stats["errors"], status=status, note=runner.last_error[:300])
     db.commit()
-    try:
-        dashboard.build(db, cfg, data / "site")
-    except Exception:
-        log.error("فشل توليد اللوحة:\n%s", traceback.format_exc())
+    publish_site = runner.due("last_site_at", sc["publish_every_minutes"] * 60, 10 * 60)
+    if publish_site:
+        try:
+            dashboard.build(db, cfg, data / "site")
+            db.set("last_site_at", now())
+            db.commit()
+        except Exception:
+            publish_site = False
+            log.error("فشل توليد اللوحة:\n%s", traceback.format_exc())
     ok = db.integrity_ok()
     db.close()
     if not ok:
         log.error("فحص سلامة قاعدة البيانات فشل — لن تُنشر")
         return 2
     (data / ".changed").write_text(now())
+    if publish_site:
+        (data / ".publish_site").write_text(now())
     log.info("انتهى: %s", runner.stats)
     return 0
 

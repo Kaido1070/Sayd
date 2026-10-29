@@ -101,13 +101,10 @@ def build(db, cfg, out):
     full = db.get("full_scan")
     runs = [dict(r) for r in db.conn.execute(
         "SELECT started_at, finished_at, phases, products_seen, changes, alerts, errors, status FROM runs ORDER BY id DESC LIMIT 10")]
-    sc = cfg["scan"]
-    nexts = [parse_ts(t) + d for t, d in ((db.get("last_hot_at"), timedelta(minutes=sc["hot_every_minutes"])),
-                                          (db.get("last_full_done_at"), timedelta(hours=sc["full_every_hours"]))) if t]
     summary = {
         "generated_at": ts,
-        # التشغيل كل ساعة عند الدقيقة 17؛ هذا وقت أول فحص مستحق بعدها
-        "next_update": min(nexts).strftime("%Y-%m-%dT%H:%M:%SZ") if nexts and not full else None,
+        # اللوحة تُنشر كل publish_every_minutes (الفحص نفسه كل ساعة)
+        "next_update": (parse_ts(ts) + timedelta(minutes=cfg["scan"]["publish_every_minutes"])).strftime("%Y-%m-%dT%H:%M:%SZ") if not full else None,
         "baseline_done": bool(db.get("baseline_done", False)),
         "full_scan": full and {"start": full["start"], "total": full["total"]},
         "last_full_done_at": db.get("last_full_done_at"),

@@ -78,7 +78,8 @@ def fmt_price(p, short=False):
          f"أقل سعر سابق: {money(p['prev_min'])} ريال\n"
          f"أقل سعر تاريخي: {'نعم ⭐' if p['lowest_ever'] else 'لا'}\n"
          f"السبب: {_e('، '.join(p['reasons']))}\n"
-         f"{_e(p['url'])}")
+         + ("✔️ تم التحقق من صفحة المنتج\n" if p.get("verified") else "")
+         + f"{_e(p['url'])}")
     return h
 
 

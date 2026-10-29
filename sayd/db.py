@@ -29,6 +29,7 @@ CREATE TABLE IF NOT EXISTS runs(
   id INTEGER PRIMARY KEY, started_at TEXT, finished_at TEXT, phases TEXT,
   products_seen INTEGER, changes INTEGER, alerts INTEGER, errors INTEGER, status TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY, ts TEXT, context TEXT, message TEXT);
+CREATE TABLE IF NOT EXISTS sitemap(sku TEXT PRIMARY KEY, url TEXT, last_checked TEXT, dead_until TEXT);
 """
 
 
@@ -135,12 +136,36 @@ class DB:
         return cur.lastrowid
 
     def delist_unseen(self, since, ts):
-        """بعد اكتمال مسح كامل: المنتجات التي لم تظهر تُعتبر غير متوفرة."""
-        rows = self.conn.execute("SELECT sku, price, was_price FROM products WHERE last_seen<? AND delisted=0", (since,)).fetchall()
+        """بعد اكتمال مسح كامل: المنتجات التي لم تظهر (ولا صفحة حية لها في خريطة الموقع) تُعتبر غير متوفرة."""
+        rows = self.conn.execute(
+            "SELECT sku, price, was_price FROM products WHERE last_seen<? AND delisted=0 "
+            "AND sku NOT IN (SELECT sku FROM sitemap WHERE dead_until IS NULL OR dead_until<?)", (since, ts)).fetchall()
         for r in rows:
             self.conn.execute("UPDATE products SET delisted=1, in_stock=0, last_changed=? WHERE sku=?", (ts, r["sku"]))
             self._history(r["sku"], ts, r["price"], r["was_price"], False)
         return len(rows)
+
+    # ---------- خريطة الموقع ----------
+    def replace_sitemap(self, mapping):
+        self.conn.execute("CREATE TEMP TABLE IF NOT EXISTS sm_new(sku TEXT PRIMARY KEY, url TEXT)")
+        self.conn.execute("DELETE FROM sm_new")
+        self.conn.executemany("INSERT OR REPLACE INTO sm_new VALUES(?,?)", mapping.items())
+        self.conn.execute("DELETE FROM sitemap WHERE sku NOT IN (SELECT sku FROM sm_new)")
+        self.conn.execute("INSERT INTO sitemap(sku,url) SELECT sku,url FROM sm_new WHERE true "
+                          "ON CONFLICT(sku) DO UPDATE SET url=excluded.url")
+
+    def sitemap_unseen(self, since, ts, mp_batch):
+        """منتجات في خريطة الموقع لم يرجعها محرك البحث في هذا المسح: العادية كلها + دفعة دوّارة من منتجات البائعين."""
+        q = ("SELECT s.sku, s.url FROM sitemap s LEFT JOIN products p ON p.sku=s.sku "
+             "WHERE (p.last_seen IS NULL OR p.last_seen<?) AND (s.dead_until IS NULL OR s.dead_until<?) AND s.sku {} LIKE 'MP%' "
+             "ORDER BY s.last_checked IS NOT NULL, s.last_checked")
+        regular = self.conn.execute(q.format("NOT"), (since, ts)).fetchall()
+        mp = self.conn.execute(q.format("") + " LIMIT ?", (since, ts, mp_batch)).fetchall()
+        return [(r[0], r[1]) for r in regular + mp]
+
+    def mark_sitemap(self, sku, ts, dead_days=None):
+        dead = ts_minus(ts, days=-dead_days) if dead_days else None
+        self.conn.execute("UPDATE sitemap SET last_checked=?, dead_until=? WHERE sku=?", (ts, dead, sku))
 
     def mark_pdp(self, sku, ts):
         self.conn.execute("UPDATE products SET pdp_checked_at=? WHERE sku=?", (ts, sku))

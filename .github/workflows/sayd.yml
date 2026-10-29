@@ -32,14 +32,17 @@ jobs:
 
       - run: pip install -r requirements.txt
 
-      # قاعدة البيانات واللوحة في فرع data (commit واحد يُستبدل كل مرة حتى لا يتضخم الريبو)
+      # قاعدة البيانات في فرع db واللوحة في فرع data (Cloudflare يبني من data فقط).
+      # كل فرع commit واحد يُستبدل كل مرة حتى لا يتضخم الريبو.
       - name: Load database
         run: |
           mkdir -p data
-          if git ls-remote --exit-code --heads origin data >/dev/null; then
-            git fetch --depth=1 origin data
-            git archive FETCH_HEAD sayd.db | tar -x -C data
-          fi
+          for b in db data; do
+            if git ls-remote --exit-code --heads origin "$b" >/dev/null; then
+              git fetch --depth=1 origin "$b"
+              if git archive FETCH_HEAD sayd.db | tar -x -C data; then echo "loaded from $b"; break; fi
+            fi
+          done
 
       - name: Run Sayd
         env:
@@ -67,12 +70,17 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          publish() {  # $1 = branch, $2 = folder
+            (cd "$2" && git init -q -b "$1" \
+              && git add -A \
+              && git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                 commit -q -m "$1 $(date -u +%Y-%m-%dT%H:%MZ)" \
+              && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$1")
+          }
           if [ ! -f data/.changed ]; then echo "لا تغييرات للنشر"; exit 0; fi
-          rm data/.changed
-          cd data
-          git init -q -b data
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -A
-          git commit -q -m "data $(date -u +%Y-%m-%dT%H:%MZ)"
-          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:data
+          mkdir -p out/db && cp data/sayd.db out/db/
+          publish db out/db
+          if [ -f data/.publish_site ]; then
+            mkdir -p out/site && cp -r data/site out/site/
+            publish data out/site
+          fi
