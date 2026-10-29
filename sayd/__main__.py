@@ -216,6 +216,21 @@ class Runner:
             _, products = self.listing("watch", skus=skus[i:i + 50])
             self.process(products)
 
+    def preorder_scan(self):
+        """منتجات «الحجز المسبق» الحالية في إكسترا (طلب واحد عادة). القائمة تُستبدل كاملة فقط
+        إذا نجح جلبها كله؛ عند الفشل تبقى السابقة كما هي."""
+        skus, start = set(), 0
+        while True:
+            total, products = self.listing("preorder", start=start, where=f'productStatusAr_uFilter:"{dashboard.PREORDER_BADGE}"')
+            if total is None:
+                return
+            self.process(products)
+            skus |= {p.sku for p in products}
+            start += PAGE_SIZE
+            if start >= total or not products:
+                break
+        self.db.set("preorder", {"skus": sorted(skus), "at": now()})
+
     def page_product(self, sku, page):
         """سعر وتوفر الصفحة مع بيانات المنتج المحفوظة (الاسم والقسم من محرك البحث أدق)."""
         row = self.db.product(sku)
@@ -411,6 +426,7 @@ class Runner:
             self.offers_scan()
         if self.baseline_done and (full_due or hot_due):
             self.watch_scan()
+            self.preorder_scan()
             self.pdp_scan()
             self.banner_scan()
             self.verify_prices()

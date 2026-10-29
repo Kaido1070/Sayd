@@ -3,15 +3,15 @@
 const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 const money = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
-const PAGE = 24, ENDED_PAGE = 60;
+const PAGE = 24;
 const HOUR = 3600000, GAP_MS = 12 * HOUR;  // أطول من 12 ساعة بلا رصد = انقطاع
 const TZ = "Asia/Riyadh", LOCALE = "ar-SA-u-nu-latn-ca-gregory";
 const RANGES = [["m1", "شهر", 30, "آخر شهر"], ["m3", "3 أشهر", 91, "آخر 3 أشهر"], ["m6", "6 أشهر", 182, "آخر 6 أشهر"], ["y1", "سنة", 365, "آخر سنة"], ["all", "الكل", 0, "منذ بدء الرصد"]];
 const ICON = (id, cls = "icon") => `<svg class="${cls}" aria-hidden="true"><use href="#i-${id}"/></svg>`;
 const NOIMG = `<div class="noimg" role="img" aria-label="لا توجد صورة">${ICON("img", "")}</div>`;
 
-let deals = [], dealById = new Map(), groups = [], offers = [], cats = [], ended = [], updated = null, total = 0;
-let state = { cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, endedLimit: ENDED_PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
+let deals = [], dealById = new Map(), groups = [], offers = [], cats = [], preorders = [], updated = null, total = 0;
+let state = { cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
 let index = null, indexing = null, homeScroll = 0, current = null;
 const shards = {};
 
@@ -121,13 +121,14 @@ async function load() {
   try {
     const [d, o] = await Promise.all([getJSON("/data/deals.json"), getJSON("/data/offers.json")]);
     deals = d.deals || []; cats = d.cats || []; updated = d.updated; total = d.products || 0; offers = o.offers || [];
-    ended = d.ended || [];
+    preorders = d.preorder || [];
     dealById = new Map(deals.map((x) => [x.id, x]));
     buildGroups();
     $("deal-count").textContent = groups.length;
     $("offer-count").textContent = offers.length;
     showUpdated();
-    renderCats(); render(); renderCoupons(); renderEnded();
+    $("preorder-count").textContent = preorders.length;
+    renderCats(); render(); renderCoupons(); renderPreorder();
     if (state.q) renderResults();
   } catch (e) {
     $("grid").innerHTML = `<div class="empty"><h3>تعذّر تحميل البيانات</h3><p>تحقق من الاتصال وحاول مرة ثانية.</p><button class="btn3d primary" type="button" data-retry>إعادة المحاولة</button></div>`;
@@ -522,13 +523,25 @@ function renderCoupons() {
   }).join("");
 }
 
-// ---------- خرجت من العروض: أسماء فقط ----------
-function renderEnded() {
-  $("ended-note").textContent = ended.length ? `${ended.length} منتج · ابحث بالاسم لفتح سجل سعره` : "";
-  $("ended").innerHTML = ended.length
-    ? ended.slice(0, state.endedLimit).map((n) => `<li>${esc(n)}</li>`).join("")
-    : '<li class="muted-row">لا توجد منتجات هنا حاليًا</li>';
-  $("ended-more-zone").hidden = ended.length <= state.endedLimit;
+// ---------- طلب مسبق: ما يعرضه إكسترا للحجز الآن فقط ----------
+function preorderCard(x) {
+  return `<article class="card mini">
+    <a class="pic" href="${plink(x.id)}" data-link tabindex="-1" aria-hidden="true">${img(x.img, "")}</a>
+    <div class="body">
+      <div class="meta"><b>${esc(seller(x))}</b><span>${esc(x.m || x.c)}</span></div>
+      <a class="name" href="${plink(x.id)}" data-link>${esc(x.n)}</a>
+      <div class="prices">${x.p ? `<span class="price">${money(x.p)} <span class="cur">ريال</span></span>` : ""}</div>
+      <div class="stock ${x.st ? "" : "out"}"><i></i>${x.st ? "متاح للحجز" : "الحجز غير متاح حاليًا"}</div>
+      <div class="spacer"></div>
+      <a class="btn3d primary" href="${esc(x.u)}" target="_blank" rel="noopener">احجز من إكسترا ${ICON("out")}</a>
+    </div>
+  </article>`;
+}
+function renderPreorder() {
+  $("preorder-note").textContent = preorders.length ? `${preorders.length} منتج` : "";
+  $("preorder").innerHTML = preorders.length
+    ? preorders.map(preorderCard).join("")
+    : '<div class="empty"><h3>لا توجد منتجات للطلب المسبق حاليًا</h3></div>';
 }
 
 // ---------- التنقل ----------
@@ -560,7 +573,7 @@ function switchTab(name) {
   document.querySelectorAll("[data-tab]").forEach((b) => {
     const on = b.dataset.tab === name; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
   });
-  for (const t of ["products", "coupons", "ended"]) $(t + "-panel").hidden = name !== t;
+  for (const t of ["products", "coupons", "preorder"]) $(t + "-panel").hidden = name !== t;
 }
 function clearFilters() {
   state = { ...state, cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
@@ -590,7 +603,6 @@ $("search-clear").addEventListener("click", () => { clearSearch(); route(); $("s
 $("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.limit = PAGE; render(); });
 $("more").addEventListener("click", () => { state.limit += PAGE; render(); });
 $("results-more").addEventListener("click", () => { state.resLimit += PAGE; renderResults(); });
-$("ended-more").addEventListener("click", () => { state.endedLimit += ENDED_PAGE; renderEnded(); });
 $("filter-open").addEventListener("click", () => {
   $("category-filter").value = state.cat; $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
   $("stock-only").checked = state.stock; $("budget-error").hidden = true; $("filters").showModal();
@@ -632,7 +644,7 @@ document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (
   if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
 }));
 document.querySelector(".seg").addEventListener("keydown", (e) => {
-  const order = ["products", "coupons", "ended"], i = order.indexOf(state.tab);
+  const order = ["products", "coupons", "preorder"], i = order.indexOf(state.tab);
   const next = { ArrowLeft: i + 1, ArrowRight: i - 1, Home: 0, End: order.length - 1 }[e.key];
   if (next === undefined) return;
   e.preventDefault();

@@ -13,6 +13,7 @@ from .db import now, ts_minus
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
+PREORDER_BADGE = "الحجز المسبق"  # شارة إكسترا لمنتجات الطلب المسبق
 JUNK_BRANDS = {"القيمة الإفتراضية", "القيمة الافتراضية"}  # قيمة فارغة من المتجر وليست علامة تجارية
 
 
@@ -83,6 +84,24 @@ def product_records(db, active_deals):
             rec["ex"] = 1
         out[shard(sku)][sku] = rec
     return out
+
+
+def preorder(db):
+    """المتاح للطلب المسبق الآن: آخر قائمة جُلبت من إكسترا، أو المنتجات التي تحمل الشارة قبل أول جلب."""
+    saved = db.get("preorder")
+    if saved is not None:
+        skus = saved["skus"]
+    else:
+        skus = [r[0] for r in db.conn.execute("SELECT sku FROM products WHERE badges LIKE ?", (f'%"{PREORDER_BADGE}"%',))]
+    out = []
+    for sku in skus:
+        row = db.product(sku)
+        if not row or row["delisted"]:
+            continue
+        out.append({"id": sku, "n": row["name"], "m": row["model"] or "", "img": row["image"] or "", "u": row["url"],
+                    "p": _r(row["price"]), "st": 1 if row["in_stock"] else 0, "mp": 1 if row["marketplace"] else 0,
+                    "sl": row["seller"] or "", "c": (row["dept"] or "").strip()})
+    return sorted(out, key=lambda x: (-x["st"], x["n"]))
 
 
 def write_coverage(db, cfg, path):
@@ -187,7 +206,7 @@ def build(db, cfg, out):
         "products": db.conn.execute("SELECT COUNT(*) FROM products WHERE delisted=0").fetchone()[0],
         "cats": [c for c, _ in cats.most_common()],
         "deals": sorted(items, key=lambda i: i["t"], reverse=True),
-        "ended": deals_mod.ended(db),
+        "preorder": preorder(db),
     })
     _dump(tmp / "data" / "offers.json", {"updated": ts, "offers": offers_payload(db, ts)})
     # ملف فارغ مكان ملف قديم كان يحتوي سجل التشغيل؛ يستبدل النسخة المخزنة في ذاكرة Cloudflare

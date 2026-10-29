@@ -79,7 +79,7 @@
       <div class="seg" role="tablist" aria-label="الأقسام">
         <button id="products-tab" class="seg-btn" role="tab" aria-selected="true" aria-controls="products-panel" data-tab="products">التخفيضات <span class="count" id="deal-count"></span></button>
         <button id="coupons-tab" class="seg-btn" role="tab" aria-selected="false" aria-controls="coupons-panel" tabindex="-1" data-tab="coupons">الكوبونات <span class="count" id="offer-count"></span></button>
-        <button id="ended-tab" class="seg-btn" role="tab" aria-selected="false" aria-controls="ended-panel" tabindex="-1" data-tab="ended">خرجت من العروض</button>
+        <button id="preorder-tab" class="seg-btn" role="tab" aria-selected="false" aria-controls="preorder-panel" tabindex="-1" data-tab="preorder">طلب مسبق <span class="count" id="preorder-count"></span></button>
       </div>
 
       <section id="products-panel" role="tabpanel" aria-labelledby="products-tab">
@@ -110,10 +110,9 @@
         <div class="coupon-grid" id="coupons"></div>
       </section>
 
-      <section id="ended-panel" role="tabpanel" aria-labelledby="ended-tab" hidden>
-        <p class="sec-note" id="ended-note"></p>
-        <ul class="ended-list" id="ended"></ul>
-        <div class="more-zone" id="ended-more-zone" hidden><button class="btn3d ghost more" id="ended-more" type="button">عرض المزيد</button></div>
+      <section id="preorder-panel" role="tabpanel" aria-labelledby="preorder-tab" hidden>
+        <p class="sec-note" id="preorder-note"></p>
+        <div class="grid" id="preorder"></div>
       </section>
     </div>
   </div>

@@ -2,7 +2,7 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from sayd import config, deals
+from sayd import config, dashboard, deals
 from sayd.db import DB
 from sayd.extra import Product
 
@@ -134,6 +134,28 @@ class DealStates(Base):
         for _ in range(3):
             deals.update_states(self.db, RULES, at(55))
         self.assertEqual(self.db.conn.execute("SELECT COUNT(*) FROM deal_state").fetchone()[0], 1)
+
+
+class Preorder(Base):
+    def add(self, sku, badges, stock=True):
+        p = Product(sku, "منتج " + sku, "قسم", ["1"], "https://www.extra.com/ar-sa/x/p/" + sku, 999, None, stock, False, badges)
+        self.db.observe(p, at(0), 30)
+
+    def ids(self):
+        return [x["id"] for x in dashboard.preorder(self.db)]
+
+    def test_badge_before_first_fetch(self):
+        self.add("P1", [dashboard.PREORDER_BADGE]); self.add("P2", ["عرض خاص"])
+        self.assertEqual(self.ids(), ["P1"])
+
+    def test_fetched_list_replaces_and_drops_gone_products(self):
+        self.add("P1", [dashboard.PREORDER_BADGE]); self.add("P2", [dashboard.PREORDER_BADGE], stock=False)
+        self.db.set("preorder", {"skus": ["P1", "P2"], "at": at(1)})
+        self.assertEqual(self.ids(), ["P1", "P2"])                 # المتاح للحجز أولاً
+        self.db.set("preorder", {"skus": ["P2"], "at": at(2)})    # إكسترا أزال P1 من الطلب المسبق
+        self.assertEqual(self.ids(), ["P2"])
+        self.db.conn.execute("UPDATE products SET delisted=1 WHERE sku='P2'")
+        self.assertEqual(self.ids(), [])
 
 
 if __name__ == "__main__":
