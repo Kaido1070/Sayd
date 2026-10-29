@@ -2,90 +2,137 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<meta name="theme-color" content="#08765e">
-<meta name="description" content="تخفيضات إكسترا الحالية: السعر، التوفير، ورابط الشراء.">
-<title>صيد | تخفيضات إكسترا</title>
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#f6f3ec" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#080d0b" media="(prefers-color-scheme: dark)">
+<meta name="color-scheme" content="light dark">
+<meta name="description" content="أسعار منتجات إكسترا كما رُصدت، وسجل سعر كل منتج.">
+<title>صيد</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<link rel="preload" href="/fonts/plex-arabic-400.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/plex-arabic-700.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preconnect" href="https://media.extra.com">
+<script src="/theme.js"></script>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
-<header>
-  <div class="wrap top">
-    <a class="brand" href="/" data-link aria-label="صيد، الصفحة الرئيسية">
-      <span class="mark"><svg width="27" height="27" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 7h16v19H8z" stroke="currentColor" stroke-width="1.8"/><path d="M12 10V7a4 4 0 0 1 8 0v3M12 18l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
-      <strong>صيد<span>Sayd</span></strong>
+<svg width="0" height="0" class="defs" aria-hidden="true" focusable="false">
+  <defs>
+    <linearGradient id="g-tile" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#1f4d3f"/><stop offset=".55" stop-color="#0f2b24"/><stop offset="1" stop-color="#081a15"/></linearGradient>
+    <linearGradient id="g-gold" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f3e0b5"/><stop offset=".5" stop-color="#d6b47a"/><stop offset="1" stop-color="#a8844a"/></linearGradient>
+    <symbol id="i-mark" viewBox="0 0 64 64">
+      <rect width="64" height="64" rx="17" fill="url(#g-tile)"/>
+      <rect x="3.5" y="3.5" width="57" height="57" rx="14" fill="none" stroke="url(#g-gold)" stroke-opacity=".5"/>
+      <path fill="url(#g-gold)" transform="translate(11.06 35.50) scale(0.03750)" d="M305 -240V-409L445 -440V-240ZM216 200Q155 200 117.0 178.0Q79 156 59.0 123.0Q39 90 32.0 56.5Q25 23 25 0Q25 -44 43.5 -84.0Q62 -124 91.0 -155.5Q120 -187 151 -207Q153 -188 149.0 -171.0Q145 -154 131 -135Q142 -130 149.5 -115.5Q157 -101 160.0 -85.0Q163 -69 160 -57Q144 -72 128.0 -72.5Q112 -73 98 -64Q84 -54 75.0 -39.5Q66 -25 66 1Q66 40 84.0 72.0Q102 104 132.0 123.5Q162 143 198 143Q237 143 260.5 120.5Q284 98 294.5 56.5Q305 15 305 -40V-309L445 -340V0Q445 56 419.0 101.5Q393 147 342.5 173.5Q292 200 216 200ZM390 0V-140H1005Q1006 -167 988.5 -183.5Q971 -200 915 -200H390V-340H915Q989 -340 1034.0 -319.0Q1079 -298 1102.5 -263.0Q1126 -228 1135.0 -186.0Q1144 -144 1144.5 -101.5Q1145 -59 1145 -23Q1145 -11 1135.0 -6.0Q1125 -1 1115.0 -0.5Q1105 0 1105 0Z"/>
+    </symbol>
+    <symbol id="i-word" viewBox="20 -470 2120 690">
+      <path d="M25 0 109 -140H680Q681 -167 663.5 -183.5Q646 -200 590 -200H135L291 -460L301 -453L249 -340H590Q656 -340 698.5 -323.0Q741 -306 766.0 -277.5Q791 -249 802.5 -213.5Q814 -178 817 -140H940V0ZM1089 208Q1065 208 1048.0 191.0Q1031 174 1031 150Q1031 126 1048.0 109.0Q1065 92 1089 92Q1113 92 1130.0 109.0Q1147 126 1147 150Q1147 174 1130.0 191.0Q1113 208 1089 208ZM916 208Q892 208 875.0 191.0Q858 174 858 150Q858 126 875.0 109.0Q892 92 916 92Q940 92 957.0 109.0Q974 126 974 150Q974 174 957.0 191.0Q940 208 916 208ZM1020 0V-140H1240V0ZM900 0V-140H980V-309L1120 -340V-23Q1120 -11 1110.0 -6.0Q1100 -1 1090.0 -0.5Q1080 0 1080 0ZM1295 -50V-409L1435 -440V-50ZM1200 0V-140H1475V0ZM1380 0V-140H1995Q1996 -167 1978.5 -183.5Q1961 -200 1905 -200H1380V-340H1905Q1979 -340 2024.0 -319.0Q2069 -298 2092.5 -263.0Q2116 -228 2125.0 -186.0Q2134 -144 2134.5 -101.5Q2135 -59 2135 -23Q2135 -11 2125.0 -6.0Q2115 -1 2105.0 -0.5Q2095 0 2095 0Z"/>
+    </symbol>
+    <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></symbol>
+    <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.2" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 2.5v2.2M12 19.3v2.2M2.5 12h2.2M19.3 12h2.2M5.3 5.3l1.6 1.6M17.1 17.1l1.6 1.6M5.3 18.7l1.6-1.6M17.1 6.9l1.6-1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/></symbol>
+    <symbol id="i-moon" viewBox="0 0 24 24"><path d="M19.5 14.6A7.8 7.8 0 0 1 9.4 4.5a7.8 7.8 0 1 0 10.1 10.1Z" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></symbol>
+    <symbol id="i-auto" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8" fill="none" stroke="currentColor" stroke-width="1.7"/><path d="M12 4a8 8 0 0 1 0 16Z" fill="currentColor"/></symbol>
+    <symbol id="i-out" viewBox="0 0 24 24"><path d="M7 17 17 7M8.5 7H17v8.5" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-filter" viewBox="0 0 24 24"><path d="M4 7h10M18 7h2M4 17h2M10 17h10" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/><circle cx="16" cy="7" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/><circle cx="8" cy="17" r="2.2" fill="none" stroke="currentColor" stroke-width="1.7"/></symbol>
+    <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    <symbol id="i-img" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="3" fill="none" stroke="currentColor" stroke-width="1.3"/><circle cx="9" cy="10" r="2" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="m21 16-5-5-9 9" fill="none" stroke="currentColor" stroke-width="1.3"/></symbol>
+  </defs>
+</svg>
+
+<header class="site-header">
+  <div class="wrap bar">
+    <a class="brand" href="/" data-link aria-label="صيد، الرئيسية">
+      <span class="brand-mark"><svg aria-hidden="true"><use href="#i-mark"/></svg></span>
+      <svg class="brand-word" aria-hidden="true"><use href="#i-word"/></svg>
     </a>
-    <div class="top-note" id="updated" hidden><span class="dot"></span><span></span></div>
+    <button class="theme-btn btn3d ghost" id="theme" type="button" aria-label="المظهر: تلقائي">
+      <svg class="icon" aria-hidden="true"><use href="#i-auto"/></svg><span id="theme-label">تلقائي</span>
+    </button>
   </div>
 </header>
 
-<main class="wrap">
-  <h1 class="sr-only">تخفيضات إكسترا</h1>
-  <div class="searchbar">
-    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#6b8075" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
-    <input id="search" type="search" placeholder="اسم المنتج أو الموديل أو رابطه" aria-label="ابحث" autocomplete="off" enterkeyhint="search">
-  </div>
-  <div id="search-results" class="search-results" hidden></div>
-
-  <section id="product-view" hidden aria-live="polite"></section>
-
-  <div id="home">
-  <div class="navrow">
-    <div class="tabs" role="tablist" aria-label="الأقسام">
-      <button id="products-tab" class="tab" role="tab" aria-selected="true" aria-controls="products-panel" data-tab="products">التخفيضات <span class="count" id="deal-count"></span></button>
-      <button id="coupons-tab" class="tab" role="tab" aria-selected="false" aria-controls="coupons-panel" tabindex="-1" data-tab="coupons">العروض والكوبونات <span class="count" id="offer-count"></span></button>
-      <button id="ended-tab" class="tab" role="tab" aria-selected="false" aria-controls="ended-panel" tabindex="-1" data-tab="ended">خرجت من العروض</button>
-    </div>
-  </div>
-
-  <section id="products-panel" role="tabpanel" aria-labelledby="products-tab">
-    <div class="categories" id="categories" aria-label="الفئات"></div>
-    <div class="tools">
-      <div>
-        <div class="results-title">آخر التخفيضات</div>
-        <span class="result-note" id="result-count" role="status"></span>
-      </div>
-      <div class="tools-left">
-        <select class="sort" id="sort" aria-label="الترتيب">
-          <option value="new">الأحدث</option>
-          <option value="saving">أكبر توفير</option>
-          <option value="discount">أعلى نسبة نزول</option>
-          <option value="price">الأقل سعرًا</option>
-        </select>
-        <button class="filter-btn" id="filter-open" type="button">
-          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="white"/><circle cx="15" cy="17" r="2.5" fill="white"/></svg>
-          تصفية <span id="filter-count" class="active-count" hidden></span>
-        </button>
+<main>
+  <section class="hero" id="hero">
+    <div class="wrap hero-in">
+      <h1 class="hero-title" id="hero-title">السعر الحقيقي لكل منتج في إكسترا</h1>
+      <form class="search" id="search-form" role="search" autocomplete="off">
+        <svg class="icon s-icon" aria-hidden="true"><use href="#i-search"/></svg>
+        <input id="search" type="search" placeholder="اسم المنتج أو الموديل أو رابطه من إكسترا" aria-label="ابحث في منتجات إكسترا" enterkeyhint="search" spellcheck="false">
+        <button class="s-clear" id="search-clear" type="button" aria-label="مسح البحث" hidden>×</button>
+      </form>
+      <div class="stats" id="stats" hidden>
+        <span><b id="st-products">—</b> منتج مرصود</span>
+        <span><b id="st-deals">—</b> تخفيض مؤكد</span>
+        <span class="live"><i></i><span id="st-updated"></span></span>
       </div>
     </div>
-    <div class="grid" id="grid" aria-live="polite"></div>
-    <div class="more-zone" id="more-zone" hidden>
-      <button class="more" id="more" type="button">عرض المزيد</button>
-      <small id="shown"></small>
+  </section>
+
+  <div class="wrap">
+    <section id="results" class="results" hidden aria-live="polite">
+      <div class="sec-head"><h2>نتائج البحث</h2><span class="sec-note" id="results-note"></span></div>
+      <div class="grid" id="results-grid"></div>
+      <div class="more-zone" id="results-more-zone" hidden><button class="btn3d ghost more" id="results-more" type="button">عرض المزيد</button></div>
+    </section>
+
+    <section id="product-view" class="product" hidden aria-live="polite"></section>
+
+    <div id="home">
+      <div class="seg" role="tablist" aria-label="الأقسام">
+        <button id="products-tab" class="seg-btn" role="tab" aria-selected="true" aria-controls="products-panel" data-tab="products">التخفيضات <span class="count" id="deal-count"></span></button>
+        <button id="coupons-tab" class="seg-btn" role="tab" aria-selected="false" aria-controls="coupons-panel" tabindex="-1" data-tab="coupons">الكوبونات <span class="count" id="offer-count"></span></button>
+        <button id="ended-tab" class="seg-btn" role="tab" aria-selected="false" aria-controls="ended-panel" tabindex="-1" data-tab="ended">خرجت من العروض</button>
+      </div>
+
+      <section id="products-panel" role="tabpanel" aria-labelledby="products-tab">
+        <div class="toolbar">
+          <div class="chips" id="categories" aria-label="الفئات"></div>
+          <div class="tools">
+            <label class="select"><span class="sr-only">الترتيب</span>
+              <select id="sort">
+                <option value="new">الأحدث</option>
+                <option value="saving">أكبر توفير</option>
+                <option value="discount">أعلى نسبة نزول</option>
+                <option value="price">الأقل سعرًا</option>
+              </select>
+            </label>
+            <button class="btn3d ghost small" id="filter-open" type="button"><svg class="icon" aria-hidden="true"><use href="#i-filter"/></svg>تصفية <span id="filter-count" class="dot-count" hidden></span></button>
+          </div>
+        </div>
+        <p class="sec-note" id="result-count" role="status"></p>
+        <div class="grid" id="grid"></div>
+        <div class="more-zone" id="more-zone" hidden>
+          <button class="btn3d ghost more" id="more" type="button">عرض المزيد</button>
+          <small id="shown"></small>
+        </div>
+      </section>
+
+      <section id="coupons-panel" role="tabpanel" aria-labelledby="coupons-tab" hidden>
+        <p class="sec-note" id="coupon-note"></p>
+        <div class="coupon-grid" id="coupons"></div>
+      </section>
+
+      <section id="ended-panel" role="tabpanel" aria-labelledby="ended-tab" hidden>
+        <p class="sec-note" id="ended-note"></p>
+        <ul class="ended-list" id="ended"></ul>
+        <div class="more-zone" id="ended-more-zone" hidden><button class="btn3d ghost more" id="ended-more" type="button">عرض المزيد</button></div>
+      </section>
     </div>
-  </section>
-
-  <section id="coupons-panel" role="tabpanel" aria-labelledby="coupons-tab" hidden>
-    <div class="tools"><div><div class="results-title">وفّر بالكود أو طريقة الدفع</div><span class="result-note" id="coupon-note"></span></div></div>
-    <div class="coupon-grid" id="coupons"></div>
-    <div class="gap"></div>
-  </section>
-
-  <section id="ended-panel" role="tabpanel" aria-labelledby="ended-tab" hidden>
-    <div class="tools"><div><div class="results-title">خرجت من العروض</div><span class="result-note" id="ended-note"></span></div></div>
-    <ul class="ended-list" id="ended"></ul>
-    <div class="more-zone" id="ended-more-zone" hidden><button class="more" id="ended-more" type="button">عرض المزيد</button></div>
-  </section>
   </div>
 </main>
 
-<footer><div class="wrap footer-inner"><strong>صيد</strong><span>الأسعار من إكسترا وقت آخر تحديث، وقد تتغير في المتجر.</span></div></footer>
+<footer class="site-footer">
+  <div class="wrap foot">
+    <svg class="foot-word" aria-hidden="true"><use href="#i-word"/></svg>
+    <p>الأسعار من إكسترا وقت آخر تحديث، وقد تتغير في المتجر.</p>
+  </div>
+</footer>
 
-<dialog class="filter-dialog" id="filters" aria-labelledby="filter-title">
+<dialog class="sheet" id="filters" aria-labelledby="filter-title">
   <form id="filter-form" novalidate>
-    <div class="modal-head"><h2 id="filter-title">تصفية</h2><button class="close" type="button" data-close="filters" aria-label="إغلاق">×</button></div>
-    <div class="filter-body">
+    <div class="sheet-head"><h2 id="filter-title">تصفية</h2><button class="close" type="button" data-close="filters" aria-label="إغلاق">×</button></div>
+    <div class="sheet-body">
       <div class="field"><label class="title" for="category-filter">الفئة</label><select id="category-filter"></select></div>
       <div class="field">
         <label class="title" for="min-price">السعر بالريال</label>
@@ -93,12 +140,10 @@
         <p class="err" id="budget-error" hidden>الحد الأعلى أقل من الحد الأدنى.</p>
       </div>
       <div class="field"><label class="check"><input type="checkbox" id="stock-only">المتوفر فقط</label></div>
-      <div class="filter-foot"><button class="offer-btn" type="submit">عرض النتائج</button><button class="reset" id="reset" type="button">إعادة الضبط</button></div>
+      <div class="sheet-foot"><button class="btn3d primary" type="submit">عرض النتائج</button><button class="btn3d ghost" id="reset" type="button">إعادة الضبط</button></div>
     </div>
   </form>
 </dialog>
-
-
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 <script src="/app.js" defer></script>

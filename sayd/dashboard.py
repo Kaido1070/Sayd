@@ -183,6 +183,7 @@ def build(db, cfg, out):
     cats = Counter(i["c"] for i in items)
     _dump(tmp / "data" / "deals.json", {
         "updated": ts,
+        "products": db.conn.execute("SELECT COUNT(*) FROM products WHERE delisted=0").fetchone()[0],
         "cats": [c for c, _ in cats.most_common()],
         "deals": sorted(items, key=lambda i: i["t"], reverse=True),
         "ended": deals_mod.ended(db),
@@ -191,10 +192,10 @@ def build(db, cfg, out):
     # ملف فارغ مكان ملف قديم كان يحتوي سجل التشغيل؛ يستبدل النسخة المخزنة في ذاكرة Cloudflare
     _dump(tmp / "data" / "summary.json", {})
 
-    # فهرس البحث لكل المنتجات (يُحمّل عند أول بحث فقط): [الرمز، الاسم، الموديل، السعر، الحالة]
+    # فهرس البحث لكل المنتجات (يُحمّل عند أول بحث فقط): [الرمز، الاسم، الموديل، السعر، الحالة، العلامة]
     _dump(tmp / "data" / "index.json", {"updated": ts, "items": [
-        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0)]
-        for r in db.conn.execute("SELECT sku, name, model, price, in_stock, delisted FROM products ORDER BY sku")]})
+        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0), r["brand"] or ""]
+        for r in db.conn.execute("SELECT sku, name, model, price, in_stock, delisted, brand FROM products ORDER BY sku")]})
     # صفحة كل منتج: ملف صغير مشترك بين ~33 منتجاً يُحمّل عند فتح الصفحة فقط
     for key, recs in product_records(db, current).items():
         _dump(tmp / "data" / "p" / f"{key}.json", recs)
