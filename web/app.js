@@ -313,6 +313,8 @@ function activeFilters() {
 }
 
 function render() {
+  // رابط قديم بفئة لم تعد موجودة يعرض الكل بدل قائمة فارغة
+  if (loaded && state.cat !== "all" && !cats.includes(state.cat)) { state.cat = "all"; syncHomeUrl(); }
   const list = visible();
   const active = activeFilters();
   $("filter-count").hidden = !active; $("filter-count").textContent = active;
