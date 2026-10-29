@@ -1,299 +1,329 @@
 "use strict";
-// لوحة Sayd: تقرأ ملفات JSON المولّدة بعد كل تشغيل
-const $ = (s) => document.querySelector(s);
+// صيد: يقرأ ملفات JSON الثابتة المولّدة بعد كل تحديث. للعرض فقط؛ لا يكتب أي بيانات.
+const $ = (id) => document.getElementById(id);
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
-const fmt = (v) => (v == null ? "—" : Number(v).toLocaleString("ar-SA-u-nu-latn", { maximumFractionDigits: 2 }));
-const EXTRA = "https://www.extra.com";
-let summary = null, products = null, productsLoading = null;
-const shards = {};
+const money = (n) => Number(n).toLocaleString("en-US", { maximumFractionDigits: 2 });
+const PAGE = 24;
+const ARROW = '<svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="M7 17 17 7M7 7h10v10"/></svg>';
+const NOIMG = '<div class="noimg" role="img" aria-label="لا توجد صورة"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="3"/><circle cx="9" cy="10" r="2"/><path d="m21 16-5-5-9 9"/></svg></div>';
 
-function ago(ts) {
-  if (!ts) return "—";
-  const m = Math.round((Date.now() - Date.parse(ts)) / 60000);
-  if (m < 60) return `قبل ${m} دقيقة`;
-  if (m < 1440) return `قبل ${Math.round(m / 60)} ساعة`;
-  return `قبل ${Math.round(m / 1440)} يوم`;
+let deals = [], groups = [], offers = [], cats = [], updated = null;
+let state = { q: "", cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products" };
+const histCache = {};
+
+// ---------- أدوات ----------
+const norm = (s) => String(s || "").toLowerCase()
+  .replace(/[ً-ٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/ؤ/g, "و").replace(/ئ/g, "ي")
+  .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
+
+function plural(n, one, two, few, many) {
+  return n === 1 ? one : n === 2 ? two : n >= 3 && n <= 10 ? `${n} ${few}` : `${n} ${many}`;
 }
-const day = (ts) => (ts ? new Date(ts).toLocaleDateString("ar-SA-u-nu-latn-ca-gregory", { day: "numeric", month: "short", year: "numeric" }) : "—");
+function span(ms) {
+  const m = Math.max(1, Math.round(ms / 60000));
+  if (m < 60) return plural(m, "دقيقة", "دقيقتين", "دقائق", "دقيقة");
+  const h = Math.round(m / 60);
+  if (h < 24) return plural(h, "ساعة", "ساعتين", "ساعات", "ساعة");
+  const d = Math.round(h / 24);
+  return plural(d, "يوم", "يومين", "أيام", "يومًا");
+}
+const ago = (ts) => "قبل " + span(Date.now() - Date.parse(ts));
+const day = (ts) => new Date(ts).toLocaleDateString("ar-SA-u-nu-latn-ca-gregory", { day: "numeric", month: "long" });
 
+function img(url, alt, w = 320) {
+  if (!url) return NOIMG;
+  const u = (x) => `${esc(url)}?w=${x}&amp;fmt=auto&amp;qlt=75`;
+  return `<img src="${u(w)}" srcset="${u(240)} 240w, ${u(400)} 400w, ${u(640)} 640w" sizes="(max-width:650px) 46vw, (max-width:950px) 30vw, 270px" width="${w}" height="${w}" loading="lazy" decoding="async" alt="${esc(alt)}">`;
+}
+// الصورة التي تفشل تُستبدل ببديل ثابت
+document.addEventListener("error", (e) => {
+  const el = e.target;
+  if (el.tagName === "IMG" && !el.dataset.failed) { el.dataset.failed = "1"; el.outerHTML = NOIMG; }
+}, true);
+
+let toastTimer;
+function toast(msg) {
+  $("toast").textContent = msg; $("toast").classList.add("show");
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => $("toast").classList.remove("show"), 3500);
+}
+
+// ---------- البيانات ----------
 async function getJSON(path) {
   const r = await fetch(path, { cache: "no-cache" });
   if (!r.ok) throw new Error(path + " " + r.status);
   return r.json();
 }
 
-// ---------- التبويبات ----------
-document.querySelectorAll(".tabs button").forEach((b) =>
-  b.addEventListener("click", () => {
-    document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
-    document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + b.dataset.tab));
-    if (b.dataset.tab === "search") { loadProducts(); $("#q").focus(); }
-    if (b.dataset.tab === "deals") loadProducts().then(renderDeals);
-    try { localStorage.setItem("sayd-tab", b.dataset.tab); } catch (e) {}
-  })
-);
-
-// ---------- آخر النزولات ----------
-function renderDrops() {
-  const onlyStock = $("#drops-stock").checked, onlyLow = $("#drops-lowest").checked, min = +$("#drops-min").value;
-  const list = summary.drops.filter((d) => (!onlyStock || d.stock) && (!onlyLow || d.lowest) && d.pct >= min);
-  $("#drops").innerHTML = list.length
-    ? list.map((d) => `
-      <li class="item click" data-sku="${esc(d.sku)}">
-        <div class="name">${esc(d.name)}</div>
-        <div class="row">
-          <span class="old">${fmt(d.old)}</span><span class="price">${fmt(d.new)} ريال</span>
-          <span class="tag drop">−${d.pct}%</span>
-          ${d.lowest ? '<span class="tag star">أقل سعر منذ بدء التتبع</span>' : ""}
-          ${d.stock ? "" : '<span class="tag out">غير متوفر</span>'}
-          <span class="muted">${esc(d.cat)} · ${ago(d.ts)}</span>
-        </div>
-      </li>`).join("")
-    : `<li class="muted">${summary.baseline_done ? "لا توجد نزولات مطابقة خلال آخر 14 يوم." : "المسح الأول جارٍ لتأسيس الأسعار؛ النزولات تظهر بعد اكتماله."}</li>`;
-}
-
-// ---------- أقوى العروض ----------
-const discOf = (p) => (p.was && p.price && p.was > p.price ? ((p.was - p.price) / p.was) * 100 : 0);
-
-function renderDeals() {
-  if (!products) return;
-  const min = +$("#deals-min").value, minPrice = +$("#deals-price").value;
-  const onlyStock = $("#deals-stock").checked, onlyExtra = $("#deals-extra").checked;
-  const list = products
-    .filter((p) => p.price >= minPrice && discOf(p) >= min && (!onlyStock || p.stock) && (!onlyExtra || !p.mp))
-    .sort((a, b) => discOf(b) - discOf(a));
-  $("#deals-note").textContent = `${list.length} منتج` + (list.length > 150 ? " (أول 150)" : "") +
-    " · الخصم محسوب من «السعر قبل الخصم» في الموقع، وبعض المنتجات سعرها قبل الخصم مبالغ فيه";
-  $("#deals").innerHTML = list.slice(0, 150).map((p) => {
-    const d = discOf(p), atLow = p.min != null && p.price <= p.min;
-    return `<li class="item click" data-sku="${esc(p.sku)}">
-      <div class="name">${esc(p.name)}</div>
-      <div class="row">
-        <span class="old">${fmt(p.was)}</span><span class="price">${fmt(p.price)} ريال</span>
-        <span class="tag drop">−${d.toFixed(0)}%</span>
-        ${d >= 85 ? '<span class="tag">تحقّق من السعر الأصلي</span>' : ""}
-        ${atLow ? '<span class="tag star">عند أقل سعر</span>' : ""}
-        ${p.stock ? "" : '<span class="tag out">غير متوفر</span>'}
-        <span class="muted">${esc((p.cat || "").split(" > ").pop())}${p.mp ? " · بائع خارجي" : ""}</span>
-      </div>
-    </li>`;
-  }).join("") || '<li class="muted">لا توجد منتجات مطابقة.</li>';
-}
-
-// ---------- العروض ----------
-function renderOffers() {
-  const type = $("#offers-type").value, onlyCode = $("#offers-code").checked;
-  const list = summary.offers.filter((o) => (!type || o.provider_type === type) && (!onlyCode || o.code));
-  $("#offers").innerHTML = list.length
-    ? list.map((o) => {
-        const terms = [
-          o.pct ? `خصم ${o.pct}%` : "", o.amount ? `خصم ${fmt(o.amount)} ريال` : "",
-          o.max_discount ? `بحد أقصى ${fmt(o.max_discount)}` : "", o.min_purchase ? `حد أدنى ${fmt(o.min_purchase)}` : "",
-          o.expires_at ? `ينتهي ${day(o.expires_at)}` : "",
-        ].filter(Boolean).join(" · ");
-        return `<li class="item">
-          <div class="row" style="margin-top:0">
-            <span class="tag">${esc(o.provider_type)}${o.provider ? " – " + esc(o.provider) : ""}</span>
-            ${o.code ? `<code>${esc(o.code)}</code>` : ""}
-            ${o.products ? `<span class="muted">${o.products} منتج</span>` : ""}
-            <span class="muted">ظهر ${ago(o.first_seen)}</span>
-          </div>
-          ${terms ? `<div class="row">${esc(terms)}</div>` : ""}
-          <div class="offer-text">${esc(o.text)}</div>
-          ${o.link ? `<div class="row"><a href="${esc(o.link)}" target="_blank" rel="noopener">الرابط ↗</a></div>` : ""}
-        </li>`;
-      }).join("")
-    : '<li class="muted">لا توجد عروض نشطة.</li>';
-}
-
-// ---------- البحث ----------
-const norm = (s) => String(s || "").toLowerCase()
-  .replace(/[ً-ْـ]/g, "").replace(/[أإآ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه")
-  .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d));
-
-function loadProducts() {
-  if (!productsLoading) {
-    $("#search-note").textContent = "جارٍ تحميل الكتالوج…";
-    productsLoading = getJSON("data/products.json").then((d) => {
-      products = d.items.map((r) => ({ sku: r[0], name: r[1], cat: d.cats[r[2]], price: r[3], was: r[4], stock: r[5], min: r[6], max: r[7], avg: r[8], mp: r[9], key: norm(r[1] + " " + r[0]) }));
-      $("#search-note").textContent = `${products.length.toLocaleString("en")} منتج`;
-      search();
-    });
+function buildGroups() {
+  // نجمع فقط الخيارات التي يربطها المتجر نفسه (لون/سعة) — لا ندمج منتجات لتشابه أسمائها
+  const byGroup = new Map();
+  for (const d of deals) {
+    d.key = norm([d.n, d.m, d.c, d.sl, d.gl, d.id].join(" "));
+    const k = d.g ? "g:" + d.g : "p:" + d.id;
+    if (!byGroup.has(k)) byGroup.set(k, []);
+    byGroup.get(k).push(d);
   }
-  return productsLoading;
+  groups = [...byGroup.values()].map((all) => ({ all: all.sort((a, b) => b.sv - a.sv) }));
 }
 
-function search() {
-  if (!products) return;
-  const q = norm($("#q").value.trim()), terms = q.split(/\s+/).filter(Boolean), onlyStock = $("#search-stock").checked;
-  if (!terms.length) { $("#results").innerHTML = ""; return; }
-  let res = products.filter((p) => terms.every((t) => p.key.includes(t)) && (!onlyStock || p.stock));
-  const sort = $("#sort").value;
-  const disc = (p) => (p.was && p.price ? (p.was - p.price) / p.was : 0);
-  if (sort === "disc") res.sort((a, b) => disc(b) - disc(a));
-  else if (sort === "price") res.sort((a, b) => (a.price ?? 1e12) - (b.price ?? 1e12));
-  else if (sort === "low") res.sort((a, b) => (a.price / (a.min || a.price) || 9) - (b.price / (b.min || b.price) || 9));
-  $("#search-note").textContent = `${res.length} نتيجة` + (res.length > 60 ? " (أول 60)" : "");
-  $("#results").innerHTML = res.slice(0, 60).map(productItem).join("");
-}
-
-function productItem(p) {
-  const atLow = p.price != null && p.min != null && p.price <= p.min;
-  return `<li class="item click" data-sku="${esc(p.sku)}">
-    <div class="name">${esc(p.name)}</div>
-    <div class="row">
-      ${p.was && p.was > p.price ? `<span class="old">${fmt(p.was)}</span>` : ""}
-      <span class="price">${fmt(p.price)} ريال</span>
-      ${atLow ? '<span class="tag star">عند أقل سعر</span>' : ""}
-      ${p.stock ? "" : '<span class="tag out">غير متوفر</span>'}
-      <span class="muted">${esc((p.cat || "").split(" > ").pop())} · ${esc(p.sku)}</span>
-    </div>
-  </li>`;
-}
-
-// ---------- المراقبة والتشغيل ----------
-function renderWatch() {
-  $("#watch").innerHTML = summary.watch.length
-    ? summary.watch.map((w) => `<li class="item ${w.sku ? "click" : ""}" ${w.sku ? `data-sku="${esc(w.sku)}"` : ""}>
-        <div class="name">${esc(w.name || (w.sku ? "SKU " + w.sku : "قسم: " + w.category))}</div>
-        <div class="row">
-          ${w.price != null ? `<span class="price">${fmt(w.price)} ريال</span>` : ""}
-          ${w.target_price != null ? `<span class="tag">المستهدف ${fmt(w.target_price)}</span>` : ""}
-          ${w.drop_pct != null ? `<span class="tag">نسبة خاصة ${w.drop_pct}%</span>` : ""}
-          ${w.sku && w.stock === false ? '<span class="tag out">غير متوفر</span>' : ""}
-        </div></li>`).join("")
-    : '<li class="muted">قائمة المراقبة فارغة.</li>';
-}
-
-function renderRuns() {
-  const s = summary;
-  const prog = s.full_scan ? `مسح كامل جارٍ: ${fmt(s.full_scan.start)} من ${fmt(s.full_scan.total)}` : `آخر مسح كامل: ${ago(s.last_full_done_at)}`;
-  $("#runs").innerHTML = `
-    <div class="stats">
-      <div class="stat"><b>${fmt(s.products)}</b><span>منتج مسجل</span></div>
-      <div class="stat"><b>${fmt(s.in_stock)}</b><span>متوفر للتوصيل</span></div>
-      <div class="stat"><b>${s.offers.length}</b><span>عرض نشط</span></div>
-      <div class="stat"><b>${s.settings.min_drop_pct}%</b><span>حد التنبيه العام</span></div>
-    </div>
-    <p class="muted">${esc(prog)} · ${s.baseline_done ? "التنبيهات مفعلة" : "المسح الأول جارٍ (بدون تنبيهات)"}</p>
-    <div class="scroll"><table class="runs"><tr><th>البداية</th><th>المراحل</th><th>منتجات</th><th>تغيّرات</th><th>تنبيهات</th><th>أخطاء</th><th>الحالة</th></tr>
-    ${s.runs.map((r) => `<tr><td>${ago(r.started_at)}</td><td>${esc(JSON.parse(r.phases || "[]").join(" "))}</td><td>${fmt(r.products_seen)}</td><td>${fmt(r.changes)}</td><td>${fmt(r.alerts)}</td><td>${fmt(r.errors)}</td><td>${esc(r.status)}</td></tr>`).join("")}
-    </table></div>`;
-}
-
-// ---------- تفاصيل المنتج والرسم ----------
-async function openProduct(sku) {
-  await loadProducts();
-  const p = products.find((x) => x.sku === sku);
-  if (!p) return;
-  const key = sku.slice(-2);
-  shards[key] = shards[key] || getJSON(`data/h/${key}.json`).catch(() => ({}));
-  const hist = (await shards[key])[sku] || [];
-  $("#d-name").textContent = p.name;
-  $("#d-cat").textContent = `${p.cat} · ${p.sku}`;
-  $("#d-link").href = `${EXTRA}/ar-sa/p/${encodeURIComponent(p.sku)}`;
-  $("#d-stats").innerHTML = [
-    ["السعر الحالي", p.price], ["قبل الخصم", p.was], ["أقل سعر", p.min], ["أعلى سعر", p.max], ["متوسط 30 يوم", p.avg],
-  ].map(([l, v]) => `<div class="stat"><b>${fmt(v)}</b><span>${l}</span></div>`).join("");
-  $("#d-table").innerHTML = "<tr><th>التاريخ</th><th>السعر</th><th>التوفر</th></tr>" +
-    hist.slice().reverse().map((h) => `<tr><td>${day(h[0] + ":00Z")}</td><td>${fmt(h[1])}</td><td>${h[2] ? "متوفر" : "غير متوفر"}</td></tr>`).join("");
-  $("#detail").showModal();
-  drawChart($("#chart"), hist.filter((h) => h[1] != null).map((h) => ({ t: Date.parse(h[0] + ":00Z"), v: h[1] })));
-}
-
-function drawChart(el, pts) {
-  el.innerHTML = "";
-  if (!pts.length) { el.innerHTML = '<p class="muted">لا يوجد سجل بعد.</p>'; return; }
-  const now = Date.now(), W = el.clientWidth || 600, H = el.clientHeight || 240;
-  const m = { l: 52, r: 12, t: 12, b: 26 };
-  const t0 = pts[0].t, t1 = Math.max(now, t0 + 86400000);
-  let lo = Math.min(...pts.map((p) => p.v)), hi = Math.max(...pts.map((p) => p.v));
-  const pad = (hi - lo) * 0.1 || hi * 0.05 || 1; lo -= pad; hi += pad;
-  const x = (t) => m.l + ((t - t0) / (t1 - t0)) * (W - m.l - m.r);
-  const y = (v) => m.t + (1 - (v - lo) / (hi - lo)) * (H - m.t - m.b);
-  // خط سلّمي: السعر ثابت حتى التغيير التالي
-  let d = `M${x(pts[0].t)},${y(pts[0].v)}`;
-  pts.forEach((p, i) => { if (i) d += `H${x(p.t)}V${y(p.v)}`; });
-  d += `H${x(t1)}`;
-  const ticks = [0, 1, 2, 3].map((i) => lo + pad + ((hi - lo - 2 * pad) * i) / 3);
-  el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" direction="ltr" role="img" aria-label="تاريخ السعر">
-    ${ticks.map((v) => `<line x1="${m.l}" x2="${W - m.r}" y1="${y(v)}" y2="${y(v)}" stroke="var(--grid)"/>
-      <text x="${m.l - 6}" y="${y(v) + 4}" text-anchor="end" font-size="11" fill="var(--muted)">${fmt(Math.round(v))}</text>`).join("")}
-    <text x="${m.l}" y="${H - 6}" font-size="11" fill="var(--muted)">${day(t0)}</text>
-    <text x="${W - m.r}" y="${H - 6}" text-anchor="end" font-size="11" fill="var(--muted)">${day(t1)}</text>
-    <path d="${d}" fill="none" stroke="var(--series)" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>
-    <line class="xh" y1="${m.t}" y2="${H - m.b}" stroke="var(--muted)" stroke-dasharray="3 3" visibility="hidden"/>
-    <circle class="dot" r="4.5" fill="var(--series)" stroke="var(--surface)" stroke-width="2" visibility="hidden"/>
-    <rect x="${m.l}" y="0" width="${W - m.l - m.r}" height="${H}" fill="transparent"/>
-  </svg><div class="tip" hidden></div>`;
-  const svg = el.querySelector("svg"), xh = svg.querySelector(".xh"), dot = svg.querySelector(".dot"), tip = el.querySelector(".tip");
-  const move = (ev) => {
-    const r = svg.getBoundingClientRect(), px = ((ev.clientX - r.left) / r.width) * W;
-    const t = t0 + ((px - m.l) / (W - m.l - m.r)) * (t1 - t0);
-    if (t < t0 || t > t1) return hide();
-    let p = pts[0];
-    for (const q of pts) if (q.t <= t) p = q;
-    const cx = x(t), cy = y(p.v);
-    xh.setAttribute("x1", cx); xh.setAttribute("x2", cx); xh.setAttribute("visibility", "visible");
-    dot.setAttribute("cx", cx); dot.setAttribute("cy", cy); dot.setAttribute("visibility", "visible");
-    tip.hidden = false; tip.style.left = (cx / W) * 100 + "%"; tip.style.top = (cy / H) * r.height + "px";
-    tip.textContent = `${day(t)}: ${fmt(p.v)} ريال`;
-  };
-  const hide = () => { xh.setAttribute("visibility", "hidden"); dot.setAttribute("visibility", "hidden"); tip.hidden = true; };
-  svg.addEventListener("pointermove", move);
-  svg.addEventListener("pointerdown", move);
-  svg.addEventListener("pointerleave", hide);
-}
-
-document.addEventListener("click", (e) => {
-  const li = e.target.closest("[data-sku]");
-  if (li && !e.target.closest("a")) openProduct(li.dataset.sku);
-});
-
-const clock = (ts) => new Date(ts).toLocaleString("ar-SA-u-nu-latn-ca-gregory", { timeZone: "Asia/Riyadh", weekday: "short", hour: "numeric", minute: "2-digit" });
-
-function nextRun(ts) {
-  // GitHub يشغّل الأداة عند الدقيقة 17 من كل ساعة
-  const d = new Date(Math.max(Date.parse(ts) - 10 * 60000, Date.now()));
-  if (d.getUTCMinutes() > 17) d.setUTCHours(d.getUTCHours() + 1);
-  d.setUTCMinutes(17, 0, 0);
-  return d;
-}
-
-function renderStatus() {
-  const s = summary;
-  const next = s.full_scan ? "المسح الأول جارٍ" : s.next_update ? `القادم ≈ ${clock(nextRun(s.next_update))}` : "";
-  $("#status").innerHTML = `آخر تحديث ${clock(s.generated_at)} (${ago(s.generated_at)})<br>${esc(next)} · ${fmt(s.products)} منتج`;
-}
-
-// ---------- البداية ----------
-(async function init() {
+async function load() {
+  renderSkeleton();
   try {
-    summary = await getJSON("data/summary.json");
+    const [d, o] = await Promise.all([getJSON("data/deals.json"), getJSON("data/offers.json")]);
+    deals = d.deals || []; cats = d.cats || []; updated = d.updated; offers = o.offers || [];
+    buildGroups();
+    $("deal-count").textContent = groups.length;
+    $("offer-count").textContent = offers.length;
+    if (updated) { $("updated").hidden = false; $("updated").lastElementChild.textContent = "آخر تحديث " + ago(updated); }
+    renderCats(); render(); renderCoupons();
   } catch (e) {
-    $("#status").textContent = "لا توجد بيانات بعد";
+    $("grid").innerHTML = `<div class="empty"><h3>تعذّر تحميل التخفيضات</h3><p>تحقق من الاتصال وحاول مرة ثانية.</p><button class="retry" type="button" data-retry>إعادة المحاولة</button></div>`;
+    $("coupons").innerHTML = "";
+    $("result-count").textContent = "";
+  }
+}
+
+// ---------- التخفيضات ----------
+function matches(d) {
+  if (state.cat !== "all" && d.c !== state.cat) return false;
+  if (state.stock && !d.st) return false;
+  if (d.p < state.min || d.p > state.max) return false;
+  if (state.q) return state.q.split(/\s+/).every((t) => d.key.includes(t));
+  return true;
+}
+const SORTS = {
+  new: (a, b) => b.t.localeCompare(a.t),
+  saving: (a, b) => b.sv - a.sv,
+  discount: (a, b) => b.pc - a.pc,
+  price: (a, b) => a.p - b.p,
+};
+function visible() {
+  const out = [];
+  for (const g of groups) {
+    const hit = g.all.filter(matches);
+    if (hit.length) out.push({ rep: [...hit].sort(SORTS[state.sort])[0], all: g.all });
+  }
+  return out.sort((a, b) => SORTS[state.sort](a.rep, b.rep));
+}
+
+function card(g) {
+  const d = g.rep, n = g.all.length;
+  const seller = d.mp ? (d.sl ? "بائع: " + d.sl : "بائع آخر") : "إكسترا";
+  const spec = [d.m, ...(d.sp || []).map((s) => s.split(":").slice(1).join(":").trim())].filter(Boolean).join(" · ");
+  return `<article class="card">
+    <div class="picture">
+      <button class="image-button" type="button" data-detail="${esc(d.id)}" aria-label="تفاصيل ${esc(d.n)}">${img(d.img, d.n)}</button>
+      <span class="badge">−${Math.round(d.pc)}٪</span>
+      ${d.lw ? `<span class="lowest">أقل سعر خلال ${span(Date.now() - Date.parse(d.fs))} من الرصد</span>` : ""}
+    </div>
+    <div class="card-body">
+      <div class="merchant"><b>${esc(seller)}</b><span>${esc(d.c)}</span></div>
+      <button class="name-button" type="button" data-detail="${esc(d.id)}"><h2 class="product-name">${esc(d.n)}</h2></button>
+      <div class="specline" title="${esc(spec)}">${esc(spec) || "&nbsp;"}</div>
+      <div class="prices"><span class="price"><bdi>${money(d.p)}</bdi> <span class="currency">ريال</span></span><span class="old" aria-label="السعر السابق ${money(d.o)} ريال">${money(d.o)}</span></div>
+      <div class="save">وفّر ${money(d.sv)} ريال • نزول ${d.pc.toFixed(1)}٪</div>
+      <div class="stock ${d.st ? "" : "out"}"><i></i>${d.st ? "متوفر" : "غير متوفر حاليًا"} · ${ago(d.t)}${n > 1 ? `<span class="options">${n} خيارات</span>` : ""}</div>
+      <div class="spacer"></div>
+      <a class="offer-btn" href="${esc(d.u)}" target="_blank" rel="noopener">افتح في إكسترا ${ARROW}</a>
+    </div>
+  </article>`;
+}
+
+function renderSkeleton() {
+  const sk = '<article class="card skeleton" aria-hidden="true"><div class="picture"></div><div class="card-body"><div class="sk"></div><div class="sk w60"></div><div class="sk w40"></div></div></article>';
+  $("grid").innerHTML = sk.repeat(8);
+  $("result-count").textContent = "جارٍ التحميل…";
+}
+
+function activeFilters() {
+  return (state.cat !== "all" ? 1 : 0) + (state.min > 0 || state.max < Infinity ? 1 : 0) + (state.stock ? 1 : 0);
+}
+
+function render() {
+  const list = visible();
+  const active = activeFilters();
+  $("filter-count").hidden = !active; $("filter-count").textContent = active;
+  const reset = active || state.q ? ' <button type="button" data-clear>إعادة الضبط</button>' : "";
+  $("result-count").innerHTML = `${list.length} منتج${reset}`;
+  if (!list.length) {
+    $("grid").innerHTML = groups.length
+      ? `<div class="empty"><h3>ما لقينا تخفيض يطابق اختيارك</h3><p>جرّب كلمة أخرى أو وسّع نطاق السعر.</p><button class="text-btn" type="button" data-clear>مسح البحث والفلاتر</button></div>`
+      : `<div class="empty"><h3>لا توجد تخفيضات مؤكدة حاليًا</h3><p>نتابع أسعار إكسترا باستمرار، وتظهر التخفيضات هنا فور تأكيدها.</p></div>`;
+    $("more-zone").hidden = true;
+  } else {
+    $("grid").innerHTML = list.slice(0, state.limit).map(card).join("");
+    $("more-zone").hidden = list.length <= state.limit;
+    $("shown").textContent = `المعروض ${Math.min(state.limit, list.length)} من ${list.length}`;
+  }
+  document.querySelectorAll("#categories button").forEach((b) => {
+    const on = b.dataset.cat === state.cat; b.classList.toggle("active", on); b.setAttribute("aria-pressed", String(on));
+  });
+}
+
+function renderCats() {
+  const counts = {};
+  for (const g of groups) for (const c of new Set(g.all.map((d) => d.c))) counts[c] = (counts[c] || 0) + 1;
+  const list = cats.filter((c) => counts[c]);
+  $("categories").innerHTML = ['<button type="button" data-cat="all" class="active" aria-pressed="true">الكل</button>']
+    .concat(list.map((c) => `<button type="button" data-cat="${esc(c)}" aria-pressed="false">${esc(c)}</button>`)).join("");
+  $("categories").hidden = list.length < 2;
+  $("category-filter").innerHTML = '<option value="all">كل الفئات</option>' + list.map((c) => `<option>${esc(c)}</option>`).join("");
+}
+
+// ---------- التفاصيل ----------
+async function history(id) {
+  const k = id.slice(-2);
+  if (!histCache[k]) histCache[k] = getJSON(`data/h/${k}.json`).catch(() => ({}));
+  return (await histCache[k])[id] || [];
+}
+
+function chart(points) {
+  // نقاط حقيقية فقط: السعر ثابت حتى التغيير التالي، والخط يمتد حتى الآن
+  const pts = points.map(([t, p]) => ({ t: Date.parse(t + ":00Z"), p }));
+  const t0 = pts[0].t, t1 = Math.max(Date.now(), pts[pts.length - 1].t + 60000);
+  const ps = pts.map((x) => x.p), lo = Math.min(...ps), hi = Math.max(...ps), pad = (hi - lo) * 0.15 || hi * 0.05 || 1;
+  const W = 500, H = 130, x = (t) => 10 + ((t - t0) / (t1 - t0)) * (W - 20), y = (p) => 10 + (1 - (p - (lo - pad)) / (hi - lo + 2 * pad)) * (H - 20);
+  let d = `M${x(pts[0].t)},${y(pts[0].p)}`;
+  pts.slice(1).forEach((q) => { d += `H${x(q.t)}V${y(q.p)}`; });
+  d += `H${x(t1)}`;
+  const dots = pts.map((q) => `<circle cx="${x(q.t)}" cy="${y(q.p)}" r="4" fill="white" stroke="#08765e" stroke-width="2"><title>${day(q.t)}: ${money(q.p)} ريال</title></circle>`).join("");
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="تغيّر السعر من ${money(pts[0].p)} إلى ${money(pts[pts.length - 1].p)} ريال">
+    <path d="M10 ${y(hi)}H490M10 ${y(lo)}H490" stroke="#e5ece5" stroke-dasharray="4 4"/>
+    <path d="${d}" fill="none" stroke="#08765e" stroke-width="3" stroke-linejoin="round"/>${dots}</svg>
+    <div class="chart-labels"><span>الآن</span><span>${day(t0)}</span></div>`;
+}
+
+async function showDetail(id) {
+  const d = deals.find((x) => x.id === id);
+  if (!d) return;
+  const g = groups.find((x) => x.all.includes(d));
+  const seller = d.mp ? (d.sl ? "بائع: " + d.sl : "بائع آخر") : "إكسترا";
+  const options = g && g.all.length > 1 ? `<div class="variants"><h4>خيارات أخرى عليها تخفيض</h4>${g.all.map((v) => `
+      <div class="variant ${v.id === d.id ? "current" : ""}"><span class="v-label">${esc(v.gl || v.n)}<br><small class="${v.st ? "" : "old"}">${v.st ? "متوفر" : "غير متوفر"} · وفّر ${money(v.sv)}</small></span>
+      <span class="v-price">${money(v.p)}</span>${v.id === d.id ? "" : `<button class="text-btn" type="button" data-detail="${esc(v.id)}">عرض</button>`}
+      <a href="${esc(v.u)}" target="_blank" rel="noopener">إكسترا ↗</a></div>`).join("")}</div>` : "";
+  $("detail-content").innerHTML = `
+    <div class="detail-top">
+      <div class="detail-art">${img(d.img, d.n, 640)}</div>
+      <div class="detail-info">
+        <div class="merchant"><b>${esc(seller)}</b><span>${esc(d.c)}</span></div>
+        <h3>${esc(d.n)}</h3>
+        ${d.m ? `<div class="model">${esc(d.m)}</div>` : ""}
+        ${(d.sp || []).length ? `<ul class="spec-list">${d.sp.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>` : ""}
+        <div class="prices"><span class="price"><bdi>${money(d.p)}</bdi> <span class="currency">ريال</span></span><span class="old">${money(d.o)}</span></div>
+        <div class="save">وفّر ${money(d.sv)} ريال • نزول ${d.pc.toFixed(1)}٪</div>
+        <p class="detail-note">السعر السابق هو آخر سعر رصدناه قبل النزول. ${d.st ? "متوفر للتوصيل" : "غير متوفر حاليًا"} · نزل السعر ${ago(d.t)}.${d.lw ? ` هذا أقل سعر خلال ${span(Date.now() - Date.parse(d.fs))} من الرصد.` : ""}</p>
+        <a class="offer-btn" href="${esc(d.u)}" target="_blank" rel="noopener">افتح في إكسترا ${ARROW}</a>
+      </div>
+    </div>
+    ${options}
+    <div class="history" id="history"><h4>سجل السعر</h4><small>جارٍ التحميل…</small></div>`;
+  const dlg = $("detail");
+  if (!dlg.open) dlg.showModal();
+  dlg.scrollTop = 0;
+  const h = await history(d.id);
+  const box = $("history");
+  if (!box) return;
+  if (h.length < 2) { box.innerHTML = "<h4>سجل السعر</h4><small>لا يوجد سجل كافٍ بعد.</small>"; return; }
+  const low = Math.min(...h.map((r) => r[1]));
+  box.innerHTML = `<h4>سجل السعر</h4><small>رصد منذ ${day(h[0][0] + ":00Z")} (${span(Date.now() - Date.parse(h[0][0] + ":00Z"))}) • الأقل خلالها: ${money(low)} ريال</small>${chart(h)}`;
+}
+
+// ---------- العروض والكوبونات ----------
+const KIND = { payment: "عرض دفع", code: "كود خصم", cashback: "كاش باك", installment: "تقسيط" };
+function renderCoupons() {
+  const q = state.q;
+  const list = offers.filter((o) => !q || q.split(/\s+/).every((t) => norm([o.title, o.desc, o.code, o.who, KIND[o.kind]].join(" ")).includes(t)));
+  $("coupon-note").textContent = offers.length ? `${list.length} عرض` : "";
+  if (!list.length) {
+    $("coupons").innerHTML = offers.length
+      ? '<div class="empty"><h3>لا يوجد عرض يطابق البحث</h3><button class="text-btn" type="button" data-clear>مسح البحث</button></div>'
+      : '<div class="empty"><h3>لا توجد عروض أو كوبونات حاليًا</h3></div>';
     return;
   }
-  renderStatus();
-  // إذا بقيت الصفحة مفتوحة: تحقق كل 10 دقائق وحدّث عند صدور بيانات جديدة
-  setInterval(async () => {
-    try {
-      const s = await getJSON("data/summary.json");
-      if (s.generated_at !== summary.generated_at) location.reload();
-      else renderStatus();
-    } catch (e) {}
-  }, 10 * 60 * 1000);
-  const types = [...new Set(summary.offers.map((o) => o.provider_type))];
-  $("#offers-type").innerHTML += types.map((t) => `<option>${esc(t)}</option>`).join("");
-  ["#drops-stock", "#drops-lowest", "#drops-min"].forEach((s) => $(s).addEventListener("change", renderDrops));
-  ["#offers-type", "#offers-code"].forEach((s) => $(s).addEventListener("change", renderOffers));
-  ["#deals-min", "#deals-price", "#deals-stock", "#deals-extra"].forEach((s) => $(s).addEventListener("change", renderDeals));
-  let timer;
-  $("#q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 150); });
-  ["#sort", "#search-stock"].forEach((s) => $(s).addEventListener("change", search));
-  renderDrops(); renderOffers(); renderWatch(); renderRuns();
-  try {
-    const t = localStorage.getItem("sayd-tab");
-    if (t) document.querySelector(`.tabs button[data-tab="${t}"]`)?.click();
-  } catch (e) {}
-})();
+  $("coupons").innerHTML = list.map((o) => {
+    const terms = [
+      o.pct ? `خصم ${o.pct}٪` : "", o.amount && o.kind !== "installment" ? `خصم ${money(o.amount)} ريال` : "",
+      o.max ? `بحد أقصى ${money(o.max)} ريال` : "", o.min ? `حد أدنى للشراء ${money(o.min)} ريال` : "",
+      o.exp ? `ينتهي ${day(o.exp)}` : "", o.count ? `ظهر على ${o.count} منتج متوفر` : "",
+    ].filter(Boolean);
+    const logo = o.who || KIND[o.kind];
+    const prods = (o.products || []).map((p) => `<a href="${esc(p.u)}" target="_blank" rel="noopener" title="${esc(p.n)}">${p.img ? `<img src="${esc(p.img)}?w=160&amp;fmt=auto&amp;qlt=70" width="78" height="78" loading="lazy" alt="">` : NOIMG}<span>${esc(p.n)}</span></a>`).join("");
+    return `<article class="coupon">
+      <div class="coupon-logo">${esc(logo)}</div>
+      <div class="coupon-main">
+        <span class="coupon-tag">${KIND[o.kind]}</span>
+        <h3>${esc(o.title)}</h3>
+        ${o.desc ? `<p>${esc(o.desc)}</p>` : ""}
+        ${terms.length ? `<div class="terms">${terms.map((t) => `<span>${esc(t)}</span>`).join("")}</div>` : ""}
+        ${o.code ? `<button class="copy" type="button" data-copy="${esc(o.code)}">${esc(o.code)} ⧉ نسخ</button>` : ""}
+        ${o.kind === "installment" ? '<div class="coupon-note">التقسيط ليس تخفيضًا في سعر المنتج.</div>' : ""}
+        ${prods ? `<div class="coupon-products">${prods}</div>` : ""}
+      </div>
+    </article>`;
+  }).join("");
+}
+
+// ---------- التفاعل ----------
+function switchTab(name) {
+  state.tab = name;
+  document.querySelectorAll("[data-tab]").forEach((b) => {
+    const on = b.dataset.tab === name; b.setAttribute("aria-selected", String(on)); b.tabIndex = on ? 0 : -1;
+  });
+  $("products-panel").hidden = name !== "products";
+  $("coupons-panel").hidden = name !== "coupons";
+  $("search").placeholder = name === "products" ? "وش المنتج اللي تدور عليه؟" : "ابحث في العروض والكوبونات";
+}
+function clearAll() {
+  state = { ...state, q: "", cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
+  $("search").value = ""; render(); renderCoupons();
+}
+
+let typing;
+$("search").addEventListener("input", (e) => {
+  clearTimeout(typing);
+  typing = setTimeout(() => { state.q = norm(e.target.value.trim()); state.limit = PAGE; render(); renderCoupons(); }, 120);
+});
+$("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.limit = PAGE; render(); });
+$("more").addEventListener("click", () => { state.limit += PAGE; render(); });
+$("filter-open").addEventListener("click", () => {
+  $("category-filter").value = state.cat; $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
+  $("stock-only").checked = state.stock; $("budget-error").hidden = true; $("filters").showModal();
+});
+$("filter-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const min = Math.max(0, Number($("min-price").value) || 0), max = $("max-price").value === "" ? Infinity : Number($("max-price").value);
+  if (max < min) { $("budget-error").hidden = false; return; }
+  state = { ...state, cat: $("category-filter").value, min, max, stock: $("stock-only").checked, limit: PAGE };
+  $("filters").close(); render();
+});
+$("reset").addEventListener("click", () => {
+  $("category-filter").value = "all"; $("min-price").value = ""; $("max-price").value = ""; $("stock-only").checked = false; $("budget-error").hidden = true;
+});
+document.addEventListener("click", async (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  if (b.dataset.cat) { state.cat = b.dataset.cat; state.limit = PAGE; render(); }
+  if (b.dataset.tab) switchTab(b.dataset.tab);
+  if (b.dataset.close) $(b.dataset.close).close();
+  if (b.dataset.detail) showDetail(b.dataset.detail);
+  if (b.dataset.clear !== undefined) clearAll();
+  if (b.dataset.retry !== undefined) load();
+  if (b.dataset.copy) {
+    try { await navigator.clipboard.writeText(b.dataset.copy); toast("تم نسخ الكود " + b.dataset.copy); }
+    catch { toast("الكود: " + b.dataset.copy); }
+  }
+});
+document.querySelectorAll("dialog").forEach((d) => d.addEventListener("click", (e) => {
+  if (e.target !== d) return;
+  const r = d.getBoundingClientRect();
+  if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) d.close();
+}));
+document.querySelector(".tabs").addEventListener("keydown", (e) => {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(e.key)) return;
+  e.preventDefault();
+  const name = state.tab === "products" ? "coupons" : "products";
+  switchTab(name); $(name + "-tab").focus();
+});
+
+load();

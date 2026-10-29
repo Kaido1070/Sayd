@@ -1,13 +1,27 @@
-"""توليد اللوحة الثابتة (Cloudflare Pages) من قاعدة البيانات. لا تحتوي أي سر."""
+"""توليد الموقع الثابت (Cloudflare Pages) من قاعدة البيانات.
+الملفات العامة تحتوي فقط ما يحتاجه الزائر: العروض الحالية، الكوبونات، وسجل أسعار منتجات العروض.
+لا أسرار ولا سجلات تشغيل ولا قائمة مراقبة."""
+import hashlib
 import json
+import re
 import shutil
-from collections import defaultdict
-from datetime import timedelta
+from collections import Counter, defaultdict
 from pathlib import Path
 
-from .db import now, parse_ts, ts_minus
+from . import deals as deals_mod
+from .db import now
 
-WEB = Path(__file__).resolve().parent.parent / "web"
+ROOT = Path(__file__).resolve().parent.parent
+WEB = ROOT / "web"
+
+
+def template_hash():
+    """بصمة قالب الموقع: إذا تغيّرت يُنشر الموقع فوراً دون انتظار موعد النشر."""
+    h = hashlib.sha1()
+    for f in sorted(WEB.rglob("*")) + [Path(__file__), ROOT / "sayd" / "deals.py"]:
+        if f.is_file():
+            h.update(f.name.encode() + f.read_bytes())
+    return h.hexdigest()[:16]
 
 
 def _dump(path, obj):
@@ -18,41 +32,62 @@ def _r(v):
     return None if v is None else round(v, 2)
 
 
-def history_stats(db, ts, days=30):
-    """متوسط زمني موزون لآخر 30 يوماً + سجل كل منتج."""
-    w = parse_ts(ts_minus(ts, days=days)).timestamp()
-    end = parse_ts(ts).timestamp()
-    hist = defaultdict(list)
-    for sku, t, price, stock in db.conn.execute("SELECT sku, ts, price, in_stock FROM price_history ORDER BY sku, ts, id"):
-        hist[sku].append((t, price, stock))
-    avg = {}
-    for sku, rows in hist.items():
-        total = span = 0.0
-        for i, (t, price, _) in enumerate(rows):
-            if price is None:
-                continue
-            a = max(parse_ts(t).timestamp(), w)
-            b = parse_ts(rows[i + 1][0]).timestamp() if i + 1 < len(rows) else end
-            if b > a:
-                total += price * (b - a)
-                span += b - a
-        if span:
-            avg[sku] = total / span
-    return hist, avg
+def _deal(d):
+    row = d["row"]
+    specs = json.loads(row["specs"] or "[]")
+    return {
+        "id": row["sku"], "n": row["name"], "m": row["model"] or "", "sp": specs[:2],
+        "c": (row["dept"] or "").strip() or "أخرى", "img": row["image"] or "", "u": row["url"],
+        "p": _r(d["price"]), "o": _r(d["prev"]), "sv": _r(d["saving"]), "pc": round(d["pct"], 1),
+        "st": 1 if row["in_stock"] else 0, "t": d["since"], "mp": 1 if row["marketplace"] else 0,
+        "sl": row["seller"] or "", "lw": 1 if d["lowest"] else 0, "fs": d["first_seen"],
+        "g": row["variant_group"] or "", "gl": row["variant_label"] or "",
+    }
 
 
-def recent_drops(db, ts, days=14, limit=400):
-    rows = db.conn.execute("""
-        SELECT h.sku, h.ts, h.price, h.prev, p.name, p.url, p.category, p.min_price, p.in_stock FROM (
-          SELECT sku, ts, price, LAG(price) OVER (PARTITION BY sku ORDER BY ts, id) AS prev FROM price_history
-        ) h JOIN products p ON p.sku = h.sku
-        WHERE h.ts >= ? AND h.prev IS NOT NULL AND h.price IS NOT NULL AND h.price < h.prev
-        ORDER BY h.ts DESC LIMIT ?""", (ts_minus(ts, days=days), limit)).fetchall()
-    return [{
-        "sku": r["sku"], "ts": r["ts"], "name": r["name"], "url": r["url"], "cat": (r["category"] or "").split(" > ")[-1],
-        "old": r["prev"], "new": r["price"], "pct": round((r["prev"] - r["price"]) / r["prev"] * 100, 1),
-        "lowest": r["min_price"] is not None and r["price"] <= r["min_price"], "stock": bool(r["in_stock"]),
-    } for r in rows]
+def _clean_offer_text(text):
+    text = re.sub(r"\s*(اقرأ\s*)?الشروط والأحكام.*$", "", text or "").strip()
+    return re.sub(r"\s+\.", ".", text)
+
+
+def offers_payload(db, ts):
+    """العروض والكوبونات الحقيقية النشطة فقط، بشروطها وتاريخ انتهائها."""
+    def products(key, limit=8):
+        rows = db.conn.execute(
+            "SELECT p.sku, p.name, p.url, p.price, p.image FROM offer_products op JOIN products p ON p.sku=op.sku "
+            "WHERE op.offer_key=? AND p.delisted=0 AND p.in_stock=1 ORDER BY p.price DESC LIMIT ?", (key, limit)).fetchall()
+        total = db.conn.execute("SELECT COUNT(*) FROM offer_products op JOIN products p ON p.sku=op.sku "
+                                "WHERE op.offer_key=? AND p.delisted=0 AND p.in_stock=1", (key,)).fetchone()[0]
+        return total, [{"id": r[0], "n": r[1], "u": r[2], "p": _r(r[3]), "img": r[4] or ""} for r in rows]
+
+    rows = db.conn.execute("SELECT * FROM offers WHERE active=1 AND (expires_at IS NULL OR expires_at>=?)", (ts,)).fetchall()
+    bank_providers = {r["provider"] for r in rows if r["source"] == "bank" and r["provider"]}
+    out = []
+    for o in rows:
+        src, text = o["source"], o["text"] or ""
+        item = {"kind": "", "title": "", "desc": "", "code": o["code"] or "", "pct": o["pct"], "amount": o["amount"],
+                "max": o["max_discount"], "min": o["min_purchase"], "exp": o["expires_at"], "who": o["provider"] or ""}
+        if src == "bank":
+            head, _, body = text.partition("•")
+            item.update(kind="payment", title=(head.strip() or o["provider"] or "عرض دفع"), desc=_clean_offer_text(body or text))
+        elif src == "installment":
+            item.update(kind="installment", title=text.split(":")[0].strip(), desc=text.split(":", 1)[-1].strip())
+        elif src == "badge" and o["code"]:
+            item.update(kind="code", title=f"كود {o['code']}", desc="خصم على منتجات محددة عند إدخال الكود في السلة.")
+        elif src == "badge" and "كاش باك" in text:
+            item.update(kind="cashback", title="كاش باك", desc="استرداد مبلغ بعد الشراء، والمبلغ يختلف حسب المنتج.")
+        else:
+            continue  # شارات عامة (تخفيضات، عرض خاص) وبنرات وعروض الحزم لا تُنشر كعروض
+        if src == "badge" and o["provider"] in bank_providers:
+            continue
+        n, sample = products(o["key"])
+        if src in ("badge", "installment") and not n:
+            continue
+        item.update(count=n, products=sample if src == "badge" else [])
+        out.append(item)
+    order = {"payment": 0, "code": 1, "cashback": 2, "installment": 3}
+    out.sort(key=lambda x: (order[x["kind"]], -(x["count"] or 0)))
+    return out
 
 
 def build(db, cfg, out):
@@ -63,61 +98,24 @@ def build(db, cfg, out):
     shutil.copytree(WEB, tmp)
     (tmp / "data" / "h").mkdir(parents=True)
 
-    hist, avg = history_stats(db, ts, cfg["alerts"]["low_window_days"])
+    found = deals_mod.find_deals(db, cfg["deals"], ts)
+    items = [_deal(d) for d in found]
+    cats = Counter(i["c"] for i in items)
+    _dump(tmp / "data" / "deals.json", {
+        "updated": ts,
+        "cats": [c for c, _ in cats.most_common()],
+        "deals": sorted(items, key=lambda i: i["t"], reverse=True),
+    })
+    _dump(tmp / "data" / "offers.json", {"updated": ts, "offers": offers_payload(db, ts)})
 
-    # فهرس البحث المختصر: الأقسام في قائمة منفصلة، والرابط يُبنى من SKU (/ar-sa/p/<sku>)
-    # items: [sku, name, category_index, price, was, stock, min, max, avg30, marketplace]
-    cats, items = {}, []
-    for r in db.conn.execute("SELECT * FROM products ORDER BY sku"):
-        ci = cats.setdefault(r["category"] or "", len(cats))
-        items.append([r["sku"], r["name"], ci, _r(r["price"]), _r(r["was_price"]),
-                      0 if r["delisted"] else r["in_stock"], _r(r["min_price"]), _r(r["max_price"]), _r(avg.get(r["sku"])),
-                      r["marketplace"] or 0])
-    _dump(tmp / "data" / "products.json", {"cats": list(cats), "items": items})
-
+    # سجل الأسعار الحقيقي لمنتجات العروض فقط
     shards = defaultdict(dict)
-    for sku, rows in hist.items():
-        shards[sku[-2:]][sku] = [[t[:16], _r(p), s] for t, p, s in rows]
+    for i in items:
+        rows = db.conn.execute("SELECT ts, price, in_stock FROM price_history WHERE sku=? ORDER BY ts, id", (i["id"],)).fetchall()
+        shards[i["id"][-2:]][i["id"]] = [[t[:16], _r(p), s] for t, p, s in rows if p and p > 0]
     for k, v in shards.items():
         _dump(tmp / "data" / "h" / f"{k}.json", v)
 
-    offers = []
-    for o in db.conn.execute("SELECT * FROM offers WHERE active=1 AND source NOT IN ('bundle') ORDER BY last_seen DESC"):
-        n = db.conn.execute("SELECT COUNT(*) FROM offer_products WHERE offer_key=?", (o["key"],)).fetchone()[0]
-        offers.append({k: o[k] for k in ("key", "source", "provider_type", "provider", "code", "pct", "amount",
-                                         "min_purchase", "max_discount", "expires_at", "text", "link", "first_seen", "last_seen")}
-                      | {"products": n})
-    # الأهم أولاً: ما له كود، ثم ما جهته معروفة، ثم الأوسع انتشاراً
-    offers.sort(key=lambda o: (not o["code"], o["provider_type"] == "غير محدد", -o["products"]))
-
-    watch = []
-    for w in cfg["watch"]:
-        item = {k: w.get(k) for k in ("sku", "category", "target_price", "drop_pct")}
-        if w.get("sku"):
-            p = db.product(str(w["sku"]))
-            if p:
-                item.update(name=p["name"], price=p["price"], stock=bool(p["in_stock"]) and not p["delisted"], url=p["url"])
-        watch.append(item)
-
-    full = db.get("full_scan")
-    runs = [dict(r) for r in db.conn.execute(
-        "SELECT started_at, finished_at, phases, products_seen, changes, alerts, errors, status FROM runs ORDER BY id DESC LIMIT 10")]
-    summary = {
-        "generated_at": ts,
-        # اللوحة تُنشر كل publish_every_minutes (الفحص نفسه كل ساعة)
-        "next_update": (parse_ts(ts) + timedelta(minutes=cfg["scan"]["publish_every_minutes"])).strftime("%Y-%m-%dT%H:%M:%SZ") if not full else None,
-        "baseline_done": bool(db.get("baseline_done", False)),
-        "full_scan": full and {"start": full["start"], "total": full["total"]},
-        "last_full_done_at": db.get("last_full_done_at"),
-        "products": len(items),
-        "in_stock": sum(1 for p in items if p[5]),
-        "drops": recent_drops(db, ts),
-        "offers": offers,
-        "watch": watch,
-        "runs": runs,
-        "settings": {"min_drop_pct": cfg["alerts"]["min_drop_pct"], "window_days": cfg["alerts"]["low_window_days"]},
-    }
-    _dump(tmp / "data" / "summary.json", summary)
-
     shutil.rmtree(out, ignore_errors=True)
     tmp.rename(out)
+    return len(items)

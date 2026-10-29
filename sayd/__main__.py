@@ -9,7 +9,7 @@ import traceback
 from dataclasses import replace
 from pathlib import Path
 
-from . import alerts, config, dashboard, offers
+from . import alerts, config, dashboard, deals, offers
 from .db import DB, now, parse_ts, ts_minus
 from .extra import OFFERS_FILTER, PAGE_SIZE, Extra, RawOffer, SiteChanged
 from .net import Blocked, Disallowed, FetchError, Http
@@ -223,6 +223,7 @@ class Runner:
         """يحفظ العروض المستخرجة من صفحة منتج، ويسجل سعرها كمشاهدة (ما لم يُطلب غير ذلك)."""
         if observe and page.product and page.price is not None and page.product.sku == sku:
             self.process([self.page_product(sku, page)], source="pdp")
+        self.db.set_page_info(sku, page.variants, page.seller)
         self.pdp_ok += 1
         ts = now()
         self.db.mark_pdp(sku, ts)
@@ -285,6 +286,23 @@ class Runner:
             if self.db.queue_alert("price", ch.sku, pa["new"], pa, now()):
                 self.stats["alerts"] += 1
         self.db.commit()
+
+    def enrich_deals(self):
+        """صفحة كل عرض حالي: تأكيد السعر كما يراه المشتري، وخيارات المنتج (لون/سعة) والبائع."""
+        rules = self.cfg["deals"]
+        ts = now()
+        todo = [d for d in deals.find_deals(self.db, rules, ts, confirmed_only=False)
+                if not d["page_ok"] or not d["row"]["image"]]
+        todo.sort(key=lambda d: -d["saving"])
+        self.phases.append(f"deals:{len(todo)}")
+        for d in todo[:rules["enrich_per_run"]]:
+            if self.left() < 60 or self.blocked >= 3:
+                break
+            row = d["row"]
+            page = self.fetch_page(row["sku"], row["url"])
+            if page:
+                self.handle_page(row["sku"], page)
+                self.db.commit()
 
     def banner_scan(self):
         self.phases.append("banners")
@@ -384,6 +402,7 @@ class Runner:
             self.pdp_scan()
             self.banner_scan()
             self.verify_prices()
+            self.enrich_deals()
         self.badge_offers()
         ts = now()
         self.db.expire_offers(ts, ts_minus(ts, days=4))
@@ -457,11 +476,14 @@ def main(argv=None):
                   changes=runner.stats["changes"], alerts=runner.stats["alerts"],
                   errors=runner.stats["errors"], status=status, note=runner.last_error[:300])
     db.commit()
-    publish_site = runner.due("last_site_at", sc["publish_every_minutes"] * 60, 10 * 60)
+    # يُنشر الموقع كل publish_every_minutes، أو فوراً إذا تغيّر قالبه
+    site_hash = dashboard.template_hash()
+    publish_site = runner.due("last_site_at", sc["publish_every_minutes"] * 60, 10 * 60) or db.get("site_hash") != site_hash
     if publish_site:
         try:
             dashboard.build(db, cfg, data / "site")
             db.set("last_site_at", now())
+            db.set("site_hash", site_hash)
             db.commit()
         except Exception:
             publish_site = False

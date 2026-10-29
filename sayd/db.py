@@ -70,7 +70,9 @@ class DB:
         self.conn.execute("PRAGMA journal_mode=DELETE")
         self.conn.executescript(SCHEMA)
         cols = {r[1] for r in self.conn.execute("PRAGMA table_info(products)")}
-        for col, typ in (("pdp_price", "REAL"), ("pdp_at", "TEXT")):
+        for col, typ in (("pdp_price", "REAL"), ("pdp_at", "TEXT"), ("image", "TEXT"), ("model", "TEXT"),
+                         ("brand", "TEXT"), ("specs", "TEXT"), ("dept", "TEXT"), ("variant_group", "TEXT"),
+                         ("variant_label", "TEXT"), ("seller", "TEXT")):
             if col not in cols:  # ترقية قاعدة بيانات قديمة
                 self.conn.execute(f"ALTER TABLE products ADD COLUMN {col} {typ}")
         self.conn.commit()
@@ -112,6 +114,7 @@ class DB:
                 "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (p.sku, p.name, p.category, codes, p.url, p.price, p.was_price, int(p.in_stock), int(p.marketplace),
                  badges, p.price, ts if p.price else None, p.price, ts if p.price else None, ts, ts, ts))
+            self._details(p)
             hid = self._history(p.sku, ts, p.price, p.was_price, p.in_stock)
             return Change(p.sku, p.name, p.url, p.category, p.category_codes, None, p.price, None, p.in_stock,
                           None, None, hid, is_new=True, was_price=p.was_price)
@@ -125,6 +128,7 @@ class DB:
         c.execute("UPDATE products SET name=?,category=?,category_codes=?,url=?,was_price=?,marketplace=?,badges=?,"
                   "last_seen=?,delisted=0 WHERE sku=?",
                   (p.name, p.category, codes, p.url or row["url"], p.was_price, int(p.marketplace), badges, ts, p.sku))
+        self._details(p)
         if source == "pdp" and p.price is not None:
             c.execute("UPDATE products SET pdp_price=?, pdp_at=? WHERE sku=?", (p.price, ts, p.sku))
         if not (price_changed or stock_changed):
@@ -142,6 +146,25 @@ class DB:
         return Change(p.sku, p.name, p.url or row["url"], p.category, p.category_codes, row["price"], new_price,
                       False if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid,
                       was_price=p.was_price)
+
+    def _details(self, p):
+        """الصورة والموديل والمواصفات: القيمة الفارغة لا تمسح قيمة محفوظة (صفحة المنتج قد تكون أكمل)."""
+        vals = {"image": p.image, "model": p.model, "brand": p.brand, "dept": p.dept,
+                "specs": json.dumps(p.specs, ensure_ascii=False) if p.specs else ""}
+        vals = {k: v for k, v in vals.items() if v}
+        if vals:
+            self.conn.execute(f"UPDATE products SET {','.join(k + '=?' for k in vals)} WHERE sku=?", (*vals.values(), p.sku))
+
+    def set_page_info(self, sku, variants, seller):
+        """خيارات المنتج كما يعرّفها المتجر: كل الخيارات تأخذ نفس رقم المجموعة (أصغر رمز فيها)."""
+        if seller:
+            self.conn.execute("UPDATE products SET seller=? WHERE sku=?", (seller, sku))
+        labels = dict(variants)
+        if len(labels) < 2 or sku not in labels:
+            return
+        group = min(labels)
+        for code, label in labels.items():
+            self.conn.execute("UPDATE products SET variant_group=?, variant_label=? WHERE sku=?", (group, label, code))
 
     def _history(self, sku, ts, price, was, stock):
         cur = self.conn.execute("INSERT INTO price_history(sku,ts,price,was_price,in_stock) VALUES(?,?,?,?,?)",

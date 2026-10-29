@@ -32,8 +32,11 @@ DEFAULT_UNBXD = {
 FIELDS = ",".join([
     "productCode", "nameAr", "price", "wasPrice", "hdAvailableCities", "inStockFlag", "comingSoon",
     "isMarketPlaceItem", "urlAr", "allCategoriesAr", "familyId", "categories",
-    "productStatusAr", "brandAr",
+    "productStatusAr", "brandAr", "imageUrl", "modelNumber", "topXClassifAttributsAr",
+    "categoryAr", "familyAr", "subFamilyAr",
 ])
+# قيم مواصفات لا تفيد المشتري
+_JUNK_SPEC = re.compile(r"غير متطابق|غير محدد|^\s*-?\s*$|^لا$|^N/?A$", re.I)
 
 SORT_CODE = "productCode asc"           # ترتيب ثابت يسمح بالاستكمال
 SORT_DISCOUNT = "priceValueDiscountPercentage desc"
@@ -58,6 +61,11 @@ class Product:
     in_stock: bool
     marketplace: bool
     badges: list = field(default_factory=list)
+    image: str = ""          # رابط صورة اكسترا الأصلية (بدون معاملات المقاس)
+    model: str = ""
+    brand: str = ""
+    specs: list = field(default_factory=list)
+    dept: str = ""           # القسم الرئيسي في اكسترا (مثل "إلكترونيات")
 
 
 @dataclass
@@ -81,6 +89,8 @@ class ProductPage:
     in_stock: bool | None
     offers: list
     product: Product | None = None   # منتج كامل لمن لا يظهر في محرك البحث
+    variants: list = field(default_factory=list)   # [(sku, وصف الخيار)] كما يعرّفها المتجر في صفحة المنتج
+    seller: str = ""                                 # اسم البائع الخارجي إن وجد
 
 
 def _num(v):
@@ -96,6 +106,56 @@ def _text(fragment):
     t = html.unescape(t).replace("\xa0", " ")
     t = t.replace("€", "ريال")  # الموقع يعرض رمز اليورو خطأً في نصوص العروض
     return re.sub(r"\s+", " ", t).strip()
+
+
+def _first_str(v):
+    if isinstance(v, list):
+        v = v[0] if v else ""
+    return (v or "").strip() if isinstance(v, str) else ""
+
+
+def _image(url):
+    """رابط صورة اكسترا بدون معاملات اللغة؛ المقاس يُضاف وقت العرض."""
+    if not url:
+        return ""
+    url = url.split("?")[0]
+    return "https:" + url if url.startswith("//") else url
+
+
+def _og_image(page):
+    m = re.search(r'<meta property="og:image" content="([^"]+)"', page)
+    return html.unescape(m.group(1)) if m else ""
+
+
+def _specs(values, limit=3):
+    out = []
+    for v in values or []:
+        if not isinstance(v, str) or ":" not in v:
+            continue
+        name, val = (x.strip() for x in v.split(":", 1))
+        if name and val and not _JUNK_SPEC.search(val):
+            out.append(f"{name}: {val}")
+    return out[:limit]
+
+
+def _variants(matrix):
+    """خيارات المنتج كما يعرّفها المتجر (اللون × السعة...): [(sku, "فضي · 256 جيجابايت")]."""
+    out = {}
+
+    def walk(nodes, labels):
+        for e in nodes or []:
+            vc = e.get("variantValueCategory") or {}
+            here = labels + [vc.get("name", "").strip()] if vc.get("name") else labels
+            kids = e.get("elements") or []
+            if kids:
+                walk(kids, here)
+            else:
+                opt = e.get("variantOption") or vc.get("compatibleVariantOption") or {}
+                if opt.get("code"):
+                    out[str(opt["code"])] = " · ".join(x for x in here if x)
+
+    walk(matrix, [])
+    return sorted(out.items())
 
 
 def _promo_id(code, text):
@@ -191,7 +251,9 @@ class Extra:
             stock = str(p.get("inStockFlag")).lower() == "true"
         if str(p.get("comingSoon")).lower() == "true":
             stock = False
-        cats = [c.strip() for c in p.get("allCategoriesAr") or [] if c and c.strip()]
+        dept = _first_str(p.get("categoryAr"))
+        tree = [x for x in (dept, _first_str(p.get("familyAr")), _first_str(p.get("subFamilyAr"))) if x]
+        cats = tree or [c.strip() for c in p.get("allCategoriesAr") or [] if c and c.strip()]
         url = p.get("urlAr") or ""
         if url and not url.startswith("http"):
             url = f"{BASE}/{LOCALE}{url}"
@@ -206,6 +268,11 @@ class Extra:
             in_stock=stock,
             marketplace=str(p.get("isMarketPlaceItem")).lower() == "true",
             badges=[_text(b) for b in p.get("productStatusAr") or [] if b and b.strip()],
+            image=_image(_first_str(p.get("imageUrl"))),
+            model=(p.get("modelNumber") or "").strip(),
+            brand=(p.get("brandAr") or "").strip(),
+            specs=_specs(p.get("topXClassifAttributsAr")),
+            dept=dept,
         )
 
     # ---------- صفحة المنتج ----------
@@ -233,6 +300,8 @@ class Extra:
                 url=BASE + "/" + LOCALE + d["url"] if str(d.get("url", "")).startswith("/") else url,
                 price=price, was_price=base if disc and base and base > disc else None,
                 in_stock=bool(stock), marketplace=bool(d.get("marketPlaceProduct")) or sku.startswith("MP"),
+                image=_image(d.get("amplienceProductBaseUrl") or _og_image(page)),
+                model=(d.get("modelNumber") or "").strip(),
             )
         offers = []
         for b in d.get("bankPromotionDetails") or []:
@@ -287,6 +356,8 @@ class Extra:
             in_stock=stock,
             offers=offers,
             product=product,
+            variants=_variants(d.get("variantMatrix")),
+            seller=((d.get("marketPlaceShopDetails") or {}).get("name") or "").strip(),
         )
 
     # ---------- خريطة الموقع ----------

@@ -5,6 +5,7 @@ import logging
 import re
 
 from .db import ts_minus
+from .deals import drop_pct
 
 log = logging.getLogger("sayd.alerts")
 
@@ -33,7 +34,7 @@ def price_alert(ch, cfg, watch):
     old, new = ch.old_price, ch.new_price
     if old is None or new is None or new >= old or new < a["min_price"]:
         return None
-    drop = (old - new) / old * 100
+    drop = drop_pct(old, new)
     rules = watch_rules(ch, watch)
     custom = [float(w["drop_pct"]) for w in rules if w.get("drop_pct") is not None]
     threshold = min(custom) if custom else a["min_drop_pct"]

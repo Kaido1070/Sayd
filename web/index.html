@@ -2,105 +2,96 @@
 <html lang="ar" dir="rtl">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="robots" content="noindex">
-<title>Sayd</title>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#08765e">
+<meta name="description" content="تخفيضات إكسترا الحالية: السعر، التوفير، ورابط الشراء.">
+<title>صيد | تخفيضات إكسترا</title>
+<link rel="preconnect" href="https://media.extra.com">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
-<header class="top">
-  <div class="brand">صيد <small>Sayd</small></div>
-  <div id="status" class="status">…</div>
+<header>
+  <div class="wrap top">
+    <a class="brand" href="./" aria-label="صيد، الصفحة الرئيسية">
+      <span class="mark"><svg width="27" height="27" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 7h16v19H8z" stroke="currentColor" stroke-width="1.8"/><path d="M12 10V7a4 4 0 0 1 8 0v3M12 18l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
+      <strong>صيد<span>Sayd</span></strong>
+    </a>
+    <div class="top-note" id="updated" hidden><span class="dot"></span><span></span></div>
+  </div>
 </header>
 
-<nav class="tabs" role="tablist">
-  <button role="tab" data-tab="drops" aria-selected="true">آخر النزولات</button>
-  <button role="tab" data-tab="deals">أقوى العروض</button>
-  <button role="tab" data-tab="offers">العروض</button>
-  <button role="tab" data-tab="search">بحث</button>
-  <button role="tab" data-tab="watch">المراقبة</button>
-  <button role="tab" data-tab="runs">التشغيل</button>
-</nav>
+<main class="wrap">
+  <h1 class="sr-only">تخفيضات إكسترا</h1>
+  <div class="searchbar">
+    <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#6b8075" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+    <input id="search" type="search" placeholder="وش المنتج اللي تدور عليه؟" aria-label="ابحث" autocomplete="off" enterkeyhint="search">
+  </div>
 
-<main>
-  <section id="tab-drops" class="tab">
-    <div class="toolbar">
-      <label><input type="checkbox" id="drops-stock" checked> المتوفر فقط</label>
-      <label><input type="checkbox" id="drops-lowest"> أقل سعر تاريخي فقط</label>
-      <select id="drops-min">
-        <option value="0">كل النسب</option>
-        <option value="5" selected>5% فأكثر</option>
-        <option value="10">10% فأكثر</option>
-        <option value="20">20% فأكثر</option>
-      </select>
+  <div class="navrow">
+    <div class="tabs" role="tablist" aria-label="الأقسام">
+      <button id="products-tab" class="tab" role="tab" aria-selected="true" aria-controls="products-panel" data-tab="products">التخفيضات <span class="count" id="deal-count"></span></button>
+      <button id="coupons-tab" class="tab" role="tab" aria-selected="false" aria-controls="coupons-panel" tabindex="-1" data-tab="coupons">العروض والكوبونات <span class="count" id="offer-count"></span></button>
     </div>
-    <ul id="drops" class="list"></ul>
-  </section>
+  </div>
 
-  <section id="tab-deals" class="tab" hidden>
-    <div class="toolbar">
-      <select id="deals-min">
-        <option value="40">خصم 40% فأكثر</option>
-        <option value="50">خصم 50% فأكثر</option>
-        <option value="60" selected>خصم 60% فأكثر</option>
-        <option value="70">خصم 70% فأكثر</option>
-      </select>
-      <select id="deals-price">
-        <option value="0">كل الأسعار</option>
-        <option value="100">100 ريال فأكثر</option>
-        <option value="500" selected>500 ريال فأكثر</option>
-        <option value="1000">1000 ريال فأكثر</option>
-      </select>
-      <label><input type="checkbox" id="deals-stock" checked> المتوفر فقط</label>
-      <label><input type="checkbox" id="deals-extra"> من اكسترا فقط</label>
+  <section id="products-panel" role="tabpanel" aria-labelledby="products-tab">
+    <div class="categories" id="categories" aria-label="الفئات"></div>
+    <div class="tools">
+      <div>
+        <div class="results-title">آخر التخفيضات</div>
+        <span class="result-note" id="result-count" role="status"></span>
+      </div>
+      <div class="tools-left">
+        <select class="sort" id="sort" aria-label="الترتيب">
+          <option value="new">الأحدث</option>
+          <option value="saving">أكبر توفير</option>
+          <option value="discount">أعلى نسبة نزول</option>
+          <option value="price">الأقل سعرًا</option>
+        </select>
+        <button class="filter-btn" id="filter-open" type="button">
+          <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><path d="M4 7h16M4 17h16"/><circle cx="9" cy="7" r="2.5" fill="white"/><circle cx="15" cy="17" r="2.5" fill="white"/></svg>
+          تصفية <span id="filter-count" class="active-count" hidden></span>
+        </button>
+      </div>
     </div>
-    <p id="deals-note" class="muted"></p>
-    <ul id="deals" class="list"></ul>
-  </section>
-
-  <section id="tab-offers" class="tab" hidden>
-    <div class="toolbar">
-      <select id="offers-type"><option value="">كل الجهات</option></select>
-      <label><input type="checkbox" id="offers-code"> بكود فقط</label>
+    <div class="grid" id="grid" aria-live="polite"></div>
+    <div class="more-zone" id="more-zone" hidden>
+      <button class="more" id="more" type="button">عرض المزيد</button>
+      <small id="shown"></small>
     </div>
-    <ul id="offers" class="list"></ul>
   </section>
 
-  <section id="tab-search" class="tab" hidden>
-    <div class="toolbar">
-      <input id="q" type="search" placeholder="اسم المنتج أو رقم SKU" autocomplete="off">
-      <select id="sort">
-        <option value="rel">الأقرب</option>
-        <option value="disc">الأعلى خصماً</option>
-        <option value="low">الأقرب لأقل سعر</option>
-        <option value="price">الأرخص</option>
-      </select>
-      <label><input type="checkbox" id="search-stock"> المتوفر فقط</label>
-    </div>
-    <p id="search-note" class="muted"></p>
-    <ul id="results" class="list"></ul>
-  </section>
-
-  <section id="tab-watch" class="tab" hidden>
-    <p class="muted">تُعدَّل قائمة المراقبة من ملف <code>config.toml</code>.</p>
-    <ul id="watch" class="list"></ul>
-  </section>
-
-  <section id="tab-runs" class="tab" hidden>
-    <div id="runs"></div>
+  <section id="coupons-panel" role="tabpanel" aria-labelledby="coupons-tab" hidden>
+    <div class="tools"><div><div class="results-title">وفّر بالكود أو طريقة الدفع</div><span class="result-note" id="coupon-note"></span></div></div>
+    <div class="coupon-grid" id="coupons"></div>
+    <div class="gap"></div>
   </section>
 </main>
 
-<dialog id="detail">
-  <form method="dialog" class="close"><button aria-label="إغلاق">✕</button></form>
-  <h2 id="d-name"></h2>
-  <p id="d-cat" class="muted"></p>
-  <div id="d-stats" class="stats"></div>
-  <div id="chart" class="chart"></div>
-  <details><summary>عرض كجدول</summary><table id="d-table"></table></details>
-  <p><a id="d-link" target="_blank" rel="noopener">فتح في اكسترا ↗</a></p>
+<footer><div class="wrap footer-inner"><strong>صيد</strong><span>الأسعار من إكسترا وقت آخر تحديث، وقد تتغير في المتجر.</span></div></footer>
+
+<dialog class="filter-dialog" id="filters" aria-labelledby="filter-title">
+  <form id="filter-form" novalidate>
+    <div class="modal-head"><h2 id="filter-title">تصفية</h2><button class="close" type="button" data-close="filters" aria-label="إغلاق">×</button></div>
+    <div class="filter-body">
+      <div class="field"><label class="title" for="category-filter">الفئة</label><select id="category-filter"></select></div>
+      <div class="field">
+        <label class="title" for="min-price">السعر بالريال</label>
+        <div class="budget"><input type="number" id="min-price" min="0" inputmode="numeric" placeholder="من" aria-label="من"><span>—</span><input type="number" id="max-price" min="0" inputmode="numeric" placeholder="إلى" aria-label="إلى"></div>
+        <p class="err" id="budget-error" hidden>الحد الأعلى أقل من الحد الأدنى.</p>
+      </div>
+      <div class="field"><label class="check"><input type="checkbox" id="stock-only">المتوفر فقط</label></div>
+      <div class="filter-foot"><button class="offer-btn" type="submit">عرض النتائج</button><button class="reset" id="reset" type="button">إعادة الضبط</button></div>
+    </div>
+  </form>
 </dialog>
 
-<script src="app.js"></script>
+<dialog class="detail-dialog" id="detail" aria-labelledby="detail-title">
+  <div class="modal-head"><h2 id="detail-title">تفاصيل المنتج</h2><button class="close" type="button" data-close="detail" aria-label="إغلاق">×</button></div>
+  <div class="detail-body" id="detail-content"></div>
+</dialog>
+
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+<script src="app.js" defer></script>
 </body>
 </html>
