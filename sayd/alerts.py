@@ -34,6 +34,8 @@ def price_alert(ch, cfg, watch):
     old, new = ch.old_price, ch.new_price
     if old is None or new is None or new >= old or new < a["min_price"]:
         return None
+    if not ch.new_stock:
+        return None  # منتج نافد: لا فائدة من التنبيه الآن؛ يصل تنبيه «رجع متوفر» إن عاد بسعره المخفض
     drop = drop_pct(old, new)
     rules = watch_rules(ch, watch)
     custom = [float(w["drop_pct"]) for w in rules if w.get("drop_pct") is not None]
@@ -67,16 +69,21 @@ def discount_pct(price, was):
     return (was - price) / was * 100
 
 
-def restock_alert(ch, watched_skus, cfg):
-    """رجوع التوفر: لقائمة المراقبة، ولأي منتج عليه خصم قوي (مثل عرض نفدت كميته ثم رجع)."""
+def restock_alert(ch, watched_skus, cfg, basis=None):
+    """رجوع التوفر: لقائمة المراقبة، ولأي منتج عليه خصم قوي، ولأي منتج رجع وسعره ما زال أقل
+    من سعره المرصود قبل النزول (basis) بنسبة التنبيه — أي تخفيض كان نافداً ثم صار متاحاً للشراء."""
     if not (ch.old_stock is False and ch.new_stock) or ch.new_price is None:
         return None
+    a = cfg["alerts"]
     disc = discount_pct(ch.new_price, ch.was_price)
-    strong = disc >= cfg["alerts"]["strong_deal_pct"] and ch.new_price >= cfg["alerts"]["strong_restock_min_price"]
-    if ch.sku not in watched_skus and not strong:
+    strong = disc >= a["strong_deal_pct"] and ch.new_price >= a["strong_restock_min_price"]
+    drop = drop_pct(basis, ch.new_price) if basis else 0.0
+    dropped = drop >= a["min_drop_pct"] and ch.new_price >= a["min_price"]
+    if ch.sku not in watched_skus and not strong and not dropped:
         return None
     return {"sku": ch.sku, "name": ch.name, "url": ch.url, "price": ch.new_price, "was": ch.was_price,
-            "discount": round(disc, 1), "strong": strong, "watched": ch.sku in watched_skus}
+            "discount": round(disc, 1), "strong": strong or drop >= a["strong_drop_pct"], "watched": ch.sku in watched_skus,
+            "old": basis if dropped else None, "drop_pct": round(drop, 1) if dropped else None}
 
 
 # ---------- الصياغة ----------
@@ -131,7 +138,10 @@ def fmt_offer(o, short=False):
 
 
 def fmt_restock(r, short=False):
-    disc = f" (خصم {r['discount']:.0f}% من {money(r['was'])})" if r.get("discount") else ""
+    if r.get("old"):  # تخفيض كان نافداً
+        disc = f" (كان {money(r['old'])}، نزول {r['drop_pct']:.0f}%)"
+    else:
+        disc = f" (خصم {r['discount']:.0f}% من {money(r['was'])})" if r.get("discount") else ""
     s = ("🔥 " if r.get("strong") else "") + f"✅ رجع متوفر: <b>{_e(r['name'])}</b> — {money(r['price'])} ريال{disc}"
     return s if short else s + f"\n{_e(r['url'])}"
 

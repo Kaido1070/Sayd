@@ -2,8 +2,8 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from sayd import categories, config, dashboard, deals
-from sayd.db import DB
+from sayd import alerts, categories, config, dashboard, deals
+from sayd.db import DB, Change
 from sayd.extra import Product
 
 RULES = config.load()["deals"]
@@ -213,6 +213,26 @@ class Categories(unittest.TestCase):
             ["الأجهزة الكبيرة", ["غسالات الملابس", "الثلاجات"]],
             ["مستلزمات المنزل", ["أمتعة السفر", "خلاطات المغاسل والسباحة", "الأدوات الكهربائية واليدوية", "القهوة"]],
             ["أخرى", ["أخرى"]]])
+
+
+class Alerts(unittest.TestCase):
+    CFG = config.load()
+
+    def change(self, old, new, old_stock=True, new_stock=True):
+        return Change("A", "منتج", "https://www.extra.com/ar-sa/x/p/A", "قسم", [], old, new, old_stock, new_stock,
+                      None, None, None)
+
+    def test_no_drop_alert_for_out_of_stock(self):
+        self.assertIsNotNone(alerts.price_alert(self.change(1000, 800), self.CFG, []))
+        self.assertIsNone(alerts.price_alert(self.change(1000, 800, new_stock=False), self.CFG, []))
+
+    def test_restock_while_still_discounted_alerts(self):
+        ch = self.change(800, 800, old_stock=False, new_stock=True)
+        r = alerts.restock_alert(ch, set(), self.CFG, basis=1000)
+        self.assertEqual((r["old"], r["drop_pct"]), (1000, 20.0))
+        self.assertIn("كان 1,000", alerts.fmt_restock(r))
+        self.assertIsNone(alerts.restock_alert(ch, set(), self.CFG, basis=820))   # نزول 2.4% فقط
+        self.assertIsNone(alerts.restock_alert(ch, set(), self.CFG, basis=None))
 
 
 if __name__ == "__main__":

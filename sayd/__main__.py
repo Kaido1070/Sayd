@@ -90,11 +90,18 @@ class Runner:
                     self.stats["alerts"] += 1
             elif pa:
                 self.to_verify.append((ch, pa))
-            ra = alerts.restock_alert(ch, watched, self.cfg)
+            if pa:
+                continue  # تنبيه النزول يكفي؛ لا يتكرر معه «رجع متوفر»
+            ra = alerts.restock_alert(ch, watched, self.cfg, self.basis_before(ch.sku) if ch.new_stock and not ch.old_stock else None)
             # لا يتكرر تنبيه رجوع التوفر لنفس المنتج بنفس السعر
             if ra and self.db.queue_alert("restock", ch.sku, ch.new_price, ra, ts):
                 self.stats["alerts"] += 1
         self.db.commit()
+
+    def basis_before(self, sku):
+        """السعر المرصود قبل آخر نزول (نفس أساس العروض في الموقع)، أو None إن لم يوجد نزول."""
+        ref = deals.reference(deals.price_runs(self.db.periods(sku)), self.cfg["deals"])
+        return ref[0] if ref else None
 
     # ---------- المراحل ----------
     def paged_scan(self, label, where=None, state_key=None):
@@ -205,8 +212,8 @@ class Runner:
         """كل منتج عليه خصم أو علامة عرض أو شارة — وليس فقط الأعلى خصماً."""
         self.phases.append("offers")
         st, done = self.paged_scan("مسح العروض", where=OFFERS_FILTER)
-        if done:
-            self.db.set("last_hot_at", now())
+        if done:  # وقت البداية، حتى لا يؤخر طول المسح موعد المسح التالي
+            self.db.set("last_hot_at", st.get("started_at") or now())
         self.db.commit()
 
     def watch_scan(self):
@@ -309,6 +316,9 @@ class Runner:
                 self.handle_page(ch.sku, page, observe=False)
                 if page.product and page.product.sku == ch.sku:
                     self.db.observe(self.page_product(ch.sku, page), now(), self.cfg["alerts"]["low_window_days"], source="pdp")
+                if page.in_stock is False:
+                    log.info("%s نافد في صفحته؛ لا تنبيه الآن", ch.sku)
+                    continue
                 if abs(page.price - ch.new_price) > 0.5:
                     log.info("سعر %s في الصفحة %s يختلف عن البحث %s", ch.sku, page.price, ch.new_price)
                     if page.price >= (ch.old_price or 0):
