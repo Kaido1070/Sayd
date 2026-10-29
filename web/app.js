@@ -310,7 +310,7 @@ function renderSkeleton(el, n = 8) {
 }
 
 function activeFilters() {
-  return (state.dept !== "all" ? 1 : 0) + (state.min > 0 || state.max < Infinity ? 1 : 0) + (state.stock ? 1 : 0);
+  return (state.dept !== "all" ? 1 : 0) + (state.min > 0 || state.max < Infinity ? 1 : 0);  // «المتوفر» له زر ظاهر
 }
 
 function render() {
@@ -334,6 +334,7 @@ function render() {
     $("more-zone").hidden = list.length <= state.limit;
     $("shown").textContent = `المعروض ${Math.min(state.limit, list.length)} من ${list.length}`;
   }
+  $("stock-toggle").setAttribute("aria-pressed", String(state.stock));
   renderChips();
 }
 
@@ -722,23 +723,25 @@ $("search-form").addEventListener("submit", (e) => {
   $("search").blur();
 });
 $("search-clear").addEventListener("click", () => { endSearch(); $("search").value = ""; $("search").focus(); });
+// المتوفر فقط: المنتجات التي نفدت تختفي من القائمة (ويُحفظ الاختيار في الرابط)
+$("stock-toggle").addEventListener("click", () => { state.stock = !state.stock; state.limit = PAGE; render(); syncHomeUrl(); });
 $("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.limit = PAGE; render(); syncHomeUrl(); });
 $("more").addEventListener("click", () => { state.limit += PAGE; render(); savePos(); });
 $("results-more").addEventListener("click", () => { state.resLimit += PAGE; renderResults(); savePos(); });
 $("filter-open").addEventListener("click", () => {
   $("category-filter").value = state.dept === "all" ? "all" : state.dept + SEP + (state.cat === "all" ? "" : state.cat); $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
-  $("stock-only").checked = state.stock; $("budget-error").hidden = true; $("filters").showModal();
+  $("budget-error").hidden = true; $("filters").showModal();
 });
 $("filter-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const min = Math.max(0, Number($("min-price").value) || 0), max = $("max-price").value === "" ? Infinity : Number($("max-price").value);
   if (max < min) { $("budget-error").hidden = false; return; }
   const [dept, cat] = $("category-filter").value === "all" ? ["all", ""] : $("category-filter").value.split(SEP);
-  state = { ...state, dept, cat: cat || "all", min, max, stock: $("stock-only").checked, limit: PAGE };
+  state = { ...state, dept, cat: cat || "all", min, max, limit: PAGE };
   $("filters").close(); render(); syncHomeUrl();
 });
 $("reset").addEventListener("click", () => {
-  $("category-filter").value = "all"; $("min-price").value = ""; $("max-price").value = ""; $("stock-only").checked = false; $("budget-error").hidden = true;
+  $("category-filter").value = "all"; $("min-price").value = ""; $("max-price").value = ""; $("budget-error").hidden = true;
 });
 document.addEventListener("click", async (e) => {
   const back = e.target.closest("a[data-back]");
