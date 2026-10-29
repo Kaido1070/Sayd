@@ -275,10 +275,12 @@ a.variant:hover{transform:translateY(-1px);border-color:var(--gold)}
 .err{color:var(--bad);font-size:12.5px;margin:8px 0 0}
 
 /* ---------- التذييل والتنبيه ---------- */
-.site-footer{margin-top:30px;border-top:1px solid var(--line);background:var(--surface-2)}
-.foot{display:flex;flex-direction:column;align-items:center;text-align:center;gap:6px;padding-top:26px;padding-bottom:calc(26px + env(safe-area-inset-bottom))}
-.foot-word{width:52px;height:18px;fill:var(--gold)}
-.foot p{margin:0;font-size:12.5px;color:var(--muted)}
+.site-footer{margin-top:48px;border-top:1px solid var(--line);background:var(--surface-2)}
+.wrap.foot{display:flex;flex-direction:column;align-items:center;text-align:center;gap:14px;padding-top:36px;padding-bottom:calc(40px + env(safe-area-inset-bottom))}
+.foot-brand{display:inline-flex;align-items:center;gap:10px;border-radius:12px}
+.foot-mark{width:34px;height:34px;border-radius:10px;box-shadow:0 2px 0 #0003}
+.foot-word{width:68px;height:23px;fill:var(--ink)}
+.foot p{margin:0;max-width:340px;font-size:13px;line-height:1.9;color:var(--muted)}
 .toast{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));left:50%;transform:translate(-50%,20px);opacity:0;pointer-events:none;z-index:40;width:max-content;max-width:calc(100% - 32px);padding:12px 20px;border-radius:14px;font-size:13px;background:var(--tip);color:var(--on-tip);box-shadow:0 14px 34px -10px #0008;transition:.22s}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
