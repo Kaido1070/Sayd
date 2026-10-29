@@ -218,7 +218,7 @@ class Extra:
         disc = _num((d.get("discountPrice") or {}).get("value"))
         base = _num((d.get("price") or {}).get("value"))
         stock_code = ((d.get("stock") or {}).get("stockLevelStatus") or {}).get("code")
-        if "stockAvailableForHD" in d:   # "متوفر" = قابل للتوصيل، مثل قوائم البحث
+        if d.get("stockAvailableForHD") is not None:   # "متوفر" = قابل للتوصيل، مثل قوائم البحث
             stock = bool(d["stockAvailableForHD"]) and stock_code != "outOfStock"
         else:
             stock = None if stock_code is None else stock_code != "outOfStock"

@@ -44,7 +44,7 @@ function renderDrops() {
         <div class="row">
           <span class="old">${fmt(d.old)}</span><span class="price">${fmt(d.new)} ريال</span>
           <span class="tag drop">−${d.pct}%</span>
-          ${d.lowest ? '<span class="tag star">أقل سعر تاريخي</span>' : ""}
+          ${d.lowest ? '<span class="tag star">أقل سعر منذ بدء التتبع</span>' : ""}
           ${d.stock ? "" : '<span class="tag out">غير متوفر</span>'}
           <span class="muted">${esc(d.cat)} · ${ago(d.ts)}</span>
         </div>

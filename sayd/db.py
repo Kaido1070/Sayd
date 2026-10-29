@@ -69,6 +69,10 @@ class DB:
         self.conn.row_factory = sqlite3.Row
         self.conn.execute("PRAGMA journal_mode=DELETE")
         self.conn.executescript(SCHEMA)
+        cols = {r[1] for r in self.conn.execute("PRAGMA table_info(products)")}
+        for col, typ in (("pdp_price", "REAL"), ("pdp_at", "TEXT")):
+            if col not in cols:  # ترقية قاعدة بيانات قديمة
+                self.conn.execute(f"ALTER TABLE products ADD COLUMN {col} {typ}")
         self.conn.commit()
 
     # ---------- meta ----------
@@ -93,8 +97,10 @@ class DB:
         vals = [r[0] for r in rows]
         return min(vals) if vals else None
 
-    def observe(self, p, ts, window_days):
-        """يسجل مشاهدة منتج ويرجع Change إذا تغيّر السعر أو التوفر (أو منتج جديد)."""
+    def observe(self, p, ts, window_days, source="api", pdp_trust_hours=12):
+        """يسجل مشاهدة منتج ويرجع Change إذا تغيّر السعر أو التوفر (أو منتج جديد).
+        source="pdp": السعر من صفحة المنتج (ما يراه المشتري). محرك البحث أحياناً يتأخر في تحديث السعر،
+        فخلال pdp_trust_hours بعد قراءة الصفحة يُتجاهل سعر البحث إذا خالفها حتى لا يتذبذب السعر."""
         c = self.conn
         row = c.execute("SELECT * FROM products WHERE sku=?", (p.sku,)).fetchone()
         codes = json.dumps(p.category_codes, ensure_ascii=False)
@@ -111,11 +117,16 @@ class DB:
                           None, None, hid, is_new=True, was_price=p.was_price)
 
         new_price = p.price if p.price is not None else row["price"]
+        if (source == "api" and row["pdp_at"] and row["pdp_price"] is not None and new_price is not None
+                and row["pdp_at"] >= ts_minus(ts, hours=pdp_trust_hours) and abs(new_price - row["pdp_price"]) >= 0.01):
+            new_price = row["price"]  # سعر البحث متأخر عن الصفحة
         price_changed = new_price is not None and (row["price"] is None or abs(new_price - row["price"]) >= 0.01)
         stock_changed = bool(row["in_stock"]) != p.in_stock or row["delisted"]
         c.execute("UPDATE products SET name=?,category=?,category_codes=?,url=?,was_price=?,marketplace=?,badges=?,"
                   "last_seen=?,delisted=0 WHERE sku=?",
                   (p.name, p.category, codes, p.url or row["url"], p.was_price, int(p.marketplace), badges, ts, p.sku))
+        if source == "pdp" and p.price is not None:
+            c.execute("UPDATE products SET pdp_price=?, pdp_at=? WHERE sku=?", (p.price, ts, p.sku))
         if not (price_changed or stock_changed):
             return None
 
@@ -129,7 +140,7 @@ class DB:
         c.execute(f"UPDATE products SET {','.join(k + '=?' for k in upd)} WHERE sku=?", (*upd.values(), p.sku))
         hid = self._history(p.sku, ts, new_price, p.was_price, p.in_stock)
         return Change(p.sku, p.name, p.url or row["url"], p.category, p.category_codes, row["price"], new_price,
-                      None if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid,
+                      False if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid,
                       was_price=p.was_price)
 
     def _history(self, sku, ts, price, was, stock):
@@ -190,6 +201,15 @@ class DB:
             if len(out) >= limit:
                 break
         return out[:limit]
+
+    def products_for_price_check(self, limit, exclude=()):
+        """تدوير على منتجات اكسترا المتوفرة: محرك البحث أحياناً يتأخر في تحديث السعر عن صفحة المنتج،
+        فنفتح صفحاتها بالتناوب — ما لم يُفحص أبداً أولاً (الأغلى قبل الأرخص)، ثم الأقدم فحصاً."""
+        rows = self.conn.execute(
+            "SELECT sku FROM products WHERE delisted=0 AND in_stock=1 AND marketplace=0 AND url!='' AND price>0 "
+            "ORDER BY pdp_checked_at IS NOT NULL, pdp_checked_at, price DESC LIMIT ?", (limit + len(exclude),)).fetchall()
+        ex = set(exclude)
+        return [r[0] for r in rows if r[0] not in ex][:limit]
 
     def product(self, sku):
         return self.conn.execute("SELECT * FROM products WHERE sku=?", (sku,)).fetchone()

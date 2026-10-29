@@ -71,7 +71,7 @@ def restock_alert(ch, watched_skus, cfg):
     if not (ch.old_stock is False and ch.new_stock) or ch.new_price is None:
         return None
     disc = discount_pct(ch.new_price, ch.was_price)
-    strong = disc >= cfg["alerts"]["strong_deal_pct"] and ch.new_price >= cfg["alerts"]["min_price"]
+    strong = disc >= cfg["alerts"]["strong_deal_pct"] and ch.new_price >= cfg["alerts"]["strong_restock_min_price"]
     if ch.sku not in watched_skus and not strong:
         return None
     return {"sku": ch.sku, "name": ch.name, "url": ch.url, "price": ch.new_price, "was": ch.was_price,
@@ -92,7 +92,7 @@ def fmt_price(p, short=False):
          f"السعر القديم: {money(p['old'])} ريال\n"
          f"السعر الجديد: <b>{money(p['new'])} ريال</b> (−{p['drop_pct']:.1f}%)\n"
          f"أقل سعر سابق: {money(p['prev_min'])} ريال\n"
-         f"أقل سعر تاريخي: {'نعم ⭐' if p['lowest_ever'] else 'لا'}\n"
+         f"أقل سعر منذ بدء التتبع: {'نعم ⭐' if p['lowest_ever'] else 'لا'}\n"
          f"السبب: {_e('، '.join(p['reasons']))}\n"
          + ("✔️ تم التحقق من صفحة المنتج\n" if p.get("verified") else "")
          + f"{_e(p['url'])}")

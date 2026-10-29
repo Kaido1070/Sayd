@@ -1,10 +1,12 @@
 """تشغيل Sayd: python -m sayd --data data"""
 import argparse
+import json
 import logging
 import re
 import sys
 import time
 import traceback
+from dataclasses import replace
 from pathlib import Path
 
 from . import alerts, config, dashboard, offers
@@ -62,8 +64,9 @@ class Runner:
         self.parse_bad += bad
         return total, products
 
-    def process(self, products):
-        """يسجل المنتجات؛ نزول السعر يُجمع للتحقق منه قبل التنبيه (بعد المسح الأول فقط)."""
+    def process(self, products, source="api"):
+        """يسجل المنتجات؛ نزول السعر يُجمع للتحقق منه قبل التنبيه (بعد المسح الأول فقط).
+        source="pdp": السعر من صفحة المنتج نفسها فهو مؤكد ولا يحتاج تحقق إضافي."""
         ts = now()
         alerting = self.baseline_done
         watched = self.watched_skus
@@ -74,14 +77,18 @@ class Runner:
                 # "كاش باك 30 ريال" و"كاش باك 50 ريال" عرض واحد (الأكواد مثل W9150 تبقى كما هي)
                 key = re.sub(r"\s*\d[\d,.]*\s*ريال", "", b).strip()
                 self.badge_skus.setdefault(key or b, set()).add(p.sku)
-            ch = self.db.observe(p, ts, wdays)
+            ch = self.db.observe(p, ts, wdays, source=source)
             if not ch or ch.is_new:
                 continue
             self.stats["changes"] += 1
             if not alerting:
                 continue
             pa = alerts.price_alert(ch, self.cfg, self.watch)
-            if pa:
+            if pa and source == "pdp":
+                pa["verified"] = True
+                if self.db.queue_alert("price", ch.sku, pa["new"], pa, ts):
+                    self.stats["alerts"] += 1
+            elif pa:
                 self.to_verify.append((ch, pa))
             ra = alerts.restock_alert(ch, watched, self.cfg)
             # لا يتكرر تنبيه رجوع التوفر لنفس المنتج بنفس السعر
@@ -181,8 +188,9 @@ class Runner:
                 continue
             self.db.mark_sitemap(sku, ts)
             if page.product and page.product.sku == sku:
-                self.process([page.product])
-            self.handle_page(sku, page)
+                known = self.db.product(sku) is not None
+                self.process([self.page_product(sku, page) if known else page.product], source="pdp")
+            self.handle_page(sku, page, observe=False)
             self.db.commit()
 
     def offers_scan(self):
@@ -201,8 +209,20 @@ class Runner:
             _, products = self.listing("watch", skus=skus[i:i + 50])
             self.process(products)
 
-    def handle_page(self, sku, page):
-        """يحفظ العروض المستخرجة من صفحة منتج."""
+    def page_product(self, sku, page):
+        """سعر وتوفر الصفحة مع بيانات المنتج المحفوظة (الاسم والقسم من محرك البحث أدق)."""
+        row = self.db.product(sku)
+        p = page.product
+        if not row or not p or page.price is None:
+            return p
+        return replace(p, name=row["name"], category=row["category"], url=row["url"] or p.url,
+                       category_codes=json.loads(row["category_codes"] or "[]"),
+                       badges=json.loads(row["badges"] or "[]"), marketplace=bool(row["marketplace"]))
+
+    def handle_page(self, sku, page, observe=True):
+        """يحفظ العروض المستخرجة من صفحة منتج، ويسجل سعرها كمشاهدة (ما لم يُطلب غير ذلك)."""
+        if observe and page.product and page.price is not None and page.product.sku == sku:
+            self.process([self.page_product(sku, page)], source="pdp")
         self.pdp_ok += 1
         ts = now()
         self.db.mark_pdp(sku, ts)
@@ -228,6 +248,7 @@ class Runner:
         ts = now()
         explicit = [str(w["sku"]) for w in self.watch if w.get("sku")]
         skus = self.db.products_for_pdp(sc["pdp_per_run"], ts_minus(ts, hours=sc["pdp_recheck_hours"]), explicit)
+        skus += self.db.products_for_price_check(sc["price_check_per_run"], exclude=skus)
         self.phases.append(f"pdp:{len(skus)}")
         for sku in skus:
             if self.left() < 120 or self.blocked >= 3:
@@ -249,7 +270,9 @@ class Runner:
             if n < limit and self.left() > 60 and self.blocked < 3:
                 page = self.fetch_page(ch.sku, ch.url)
             if page and page.price is not None:
-                self.handle_page(ch.sku, page)
+                self.handle_page(ch.sku, page, observe=False)
+                if page.product and page.product.sku == ch.sku:
+                    self.db.observe(self.page_product(ch.sku, page), now(), self.cfg["alerts"]["low_window_days"], source="pdp")
                 if abs(page.price - ch.new_price) > 0.5:
                     log.info("سعر %s في الصفحة %s يختلف عن البحث %s", ch.sku, page.price, ch.new_price)
                     if page.price >= (ch.old_price or 0):
