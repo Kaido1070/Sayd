@@ -303,12 +303,23 @@ def main(argv=None):
     ap.add_argument("--force-full", action="store_true")
     ap.add_argument("--force-hot", action="store_true")
     ap.add_argument("--no-send", action="store_true", help="لا ترسل تنبيهات (تبقى معلقة)")
+    ap.add_argument("--test-notify", action="store_true", help="أرسل رسالة تجربة لكل القنوات المضبوطة ثم اخرج")
     args = ap.parse_args(argv)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s", stream=sys.stdout)
     logging.getLogger("httpx").setLevel(logging.WARNING)  # يمنع طباعة الروابط (رابط تيليجرام يحتوي التوكن)
 
     cfg = config.load(args.config)
+    if args.test_notify:
+        n = Notifier(cfg["secrets"])
+        if not n.configured:
+            log.error("لا توجد قناة مضبوطة: أضف TELEGRAM_BOT_TOKEN و TELEGRAM_CHAT_ID (أو SMTP_* أو NTFY_TOPIC) في GitHub Secrets")
+            return 1
+        h = "✅ <b>Sayd</b>: تم ربط التنبيهات بنجاح.\nستصلك هنا تنبيهات نزول الأسعار والعروض الجديدة."
+        ch = n.send(h, alerts.plain(h), "Sayd ✅ تجربة التنبيهات", cfg["site"].get("dashboard_url"))
+        n.close()
+        log.info("نتيجة التجربة: %s", ch or "فشل الإرسال في كل القنوات")
+        return 0 if ch else 1
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
     db = DB(data / "sayd.db")

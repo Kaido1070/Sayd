@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto | full | hot"
+        description: "auto | full | hot | test (رسالة تجربة للتنبيهات)"
         default: auto
         type: choice
-        options: [auto, full, hot]
+        options: [auto, full, hot, test]
 
 permissions:
   contents: write
@@ -58,6 +58,7 @@ jobs:
           case "$MODE" in
             full) python -m sayd --data data --force-full ;;
             hot)  python -m sayd --data data --force-hot ;;
+            test) python -m sayd --test-notify ;;
             *)    python -m sayd --data data ;;
           esac
 
