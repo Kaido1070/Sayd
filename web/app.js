@@ -11,7 +11,7 @@ const ICON = (id, cls = "icon") => `<svg class="${cls}" aria-hidden="true"><use 
 const NOIMG = `<div class="noimg" role="img" aria-label="لا توجد صورة">${ICON("img", "")}</div>`;
 
 let deals = [], dealById = new Map(), groups = [], offers = [], cats = [], preorders = [], updated = null, total = 0;
-let state = { dept: "all", cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
+let state = { dept: "all", cat: "all", min: 0, max: Infinity, stock: true, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
 let index = null, indexing = null, current = null, loaded = false;
 const shards = {};
 
@@ -629,7 +629,7 @@ function homeUrl() {
   if (state.sort !== "new") q.set("sort", state.sort);
   if (state.min > 0) q.set("min", state.min);
   if (state.max < Infinity) q.set("max", state.max);
-  if (state.stock) q.set("stock", "1");
+  if (!state.stock) q.set("stock", "0");  // «المتوفر» مفعّل افتراضيًا
   const s = q.toString();
   return "/" + (s ? "?" + s : "");
 }
@@ -674,7 +674,7 @@ function route(restore = true) {
     state.sort = SORTS[sp.get("sort")] ? sp.get("sort") : "new";
     state.min = min > 0 ? min : 0;
     state.max = sp.get("max") !== null && max >= 0 ? max : Infinity;
-    state.stock = sp.get("stock") === "1";
+    state.stock = sp.get("stock") !== "0";
     $("sort").value = state.sort;
   }
   document.title = tab === "products" ? "صيد" : `${TITLES[tab]} | صيد`;
@@ -710,7 +710,7 @@ function openTab(name) {
   savePos();
 }
 function clearFilters() {
-  state = { ...state, dept: "all", cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
+  state = { ...state, dept: "all", cat: "all", min: 0, max: Infinity, stock: true, limit: PAGE };
   render(); syncHomeUrl();
 }
 
