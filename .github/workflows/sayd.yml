@@ -1,0 +1,72 @@
+name: Sayd
+
+on:
+  schedule:
+    - cron: "17 * * * *"   # كل ساعة؛ البرنامج يقرر حسب config.toml هل يوجد فحص مستحق
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "auto | full | hot"
+        default: auto
+        type: choice
+        options: [auto, full, hot]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sayd
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 345
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: pip install -r requirements.txt
+
+      # قاعدة البيانات واللوحة في فرع data (commit واحد يُستبدل كل مرة حتى لا يتضخم الريبو)
+      - name: Load database
+        run: |
+          mkdir -p data
+          if git ls-remote --exit-code --heads origin data >/dev/null; then
+            git fetch --depth=1 origin data
+            git archive FETCH_HEAD sayd.db | tar -x -C data
+          fi
+
+      - name: Run Sayd
+        env:
+          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          NTFY_TOPIC: ${{ secrets.NTFY_TOPIC }}
+          NTFY_SERVER: ${{ secrets.NTFY_SERVER }}
+          NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
+          MODE: ${{ inputs.mode || 'auto' }}
+        run: |
+          case "$MODE" in
+            full) python -m sayd --data data --force-full ;;
+            hot)  python -m sayd --data data --force-hot ;;
+            *)    python -m sayd --data data ;;
+          esac
+
+      - name: Publish database and dashboard
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f data/.changed ]; then echo "لا تغييرات للنشر"; exit 0; fi
+          rm data/.changed
+          cd data
+          git init -q -b data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -q -m "data $(date -u +%Y-%m-%dT%H:%MZ)"
+          git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:data

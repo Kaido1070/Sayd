@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Sayd</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">صيد <small>Sayd</small></div>
+  <div id="status" class="status">…</div>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="drops" aria-selected="true">آخر النزولات</button>
+  <button role="tab" data-tab="offers">العروض</button>
+  <button role="tab" data-tab="search">بحث</button>
+  <button role="tab" data-tab="watch">المراقبة</button>
+  <button role="tab" data-tab="runs">التشغيل</button>
+</nav>
+
+<main>
+  <section id="tab-drops" class="tab">
+    <div class="toolbar">
+      <label><input type="checkbox" id="drops-stock" checked> المتوفر فقط</label>
+      <label><input type="checkbox" id="drops-lowest"> أقل سعر تاريخي فقط</label>
+      <select id="drops-min">
+        <option value="0">كل النسب</option>
+        <option value="5" selected>5% فأكثر</option>
+        <option value="10">10% فأكثر</option>
+        <option value="20">20% فأكثر</option>
+      </select>
+    </div>
+    <ul id="drops" class="list"></ul>
+  </section>
+
+  <section id="tab-offers" class="tab" hidden>
+    <div class="toolbar">
+      <select id="offers-type"><option value="">كل الجهات</option></select>
+      <label><input type="checkbox" id="offers-code"> بكود فقط</label>
+    </div>
+    <ul id="offers" class="list"></ul>
+  </section>
+
+  <section id="tab-search" class="tab" hidden>
+    <div class="toolbar">
+      <input id="q" type="search" placeholder="اسم المنتج أو رقم SKU" autocomplete="off">
+      <select id="sort">
+        <option value="rel">الأقرب</option>
+        <option value="disc">الأعلى خصماً</option>
+        <option value="low">الأقرب لأقل سعر</option>
+        <option value="price">الأرخص</option>
+      </select>
+      <label><input type="checkbox" id="search-stock"> المتوفر فقط</label>
+    </div>
+    <p id="search-note" class="muted"></p>
+    <ul id="results" class="list"></ul>
+  </section>
+
+  <section id="tab-watch" class="tab" hidden>
+    <p class="muted">تُعدَّل قائمة المراقبة من ملف <code>config.toml</code>.</p>
+    <ul id="watch" class="list"></ul>
+  </section>
+
+  <section id="tab-runs" class="tab" hidden>
+    <div id="runs"></div>
+  </section>
+</main>
+
+<dialog id="detail">
+  <form method="dialog" class="close"><button aria-label="إغلاق">✕</button></form>
+  <h2 id="d-name"></h2>
+  <p id="d-cat" class="muted"></p>
+  <div id="d-stats" class="stats"></div>
+  <div id="chart" class="chart"></div>
+  <details><summary>عرض كجدول</summary><table id="d-table"></table></details>
+  <p><a id="d-link" target="_blank" rel="noopener">فتح في اكسترا ↗</a></p>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

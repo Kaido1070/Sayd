@@ -1,0 +1,38 @@
+# إعدادات Sayd (غير سرية). التوكنات والمعرفات في GitHub Secrets فقط.
+
+[site]
+dashboard_url = "https://sayd.pages.dev"
+city = "SA-riyadh"            # مدينة حساب التوفر
+include_marketplace = true    # منتجات البائعين الخارجيين
+user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
+
+[scan]
+delay_min = 1.0               # ثواني بين الطلبات
+delay_max = 3.0
+max_run_minutes = 300         # يتوقف بهدوء قبل حد GitHub (360) ويكمل لاحقاً
+hot_every_minutes = 120       # فحص العروض والأعلى خصماً
+full_every_hours = 24         # مسح الكتالوج كامل
+hot_categories = ["offers", "last-piece-deals"]
+hot_top_discount_pages = 10   # صفحات (100 منتج) من الأعلى خصماً في الكتالوج
+pdp_per_run = 40              # صفحات منتجات تُفتح لكل تشغيل لاستخراج نصوص العروض
+pdp_recheck_hours = 72
+banner_pages = ["/ar-sa/", "/ar-sa/promotions"]
+
+[alerts]
+min_drop_pct = 5.0            # نزول عام
+low_window_days = 30          # أقل سعر خلال هذه المدة
+low_min_drop_pct = 1.0        # أقل نزول يُعتبر لشرط "أقل سعر خلال 30 يوم" (يمنع الإزعاج من فروق هللات)
+digest_threshold = 6          # أكثر من هذا العدد = رسالة ملخص
+digest_max_items = 40
+alert_bundle_offers = false   # عروض "اشترِ X ووفّر على Y"
+min_price = 1                 # تجاهل الأسعار الأقل
+
+# قائمة المراقبة: sku أو category (رمز القسم مثل "2-212" أو جزء من اسمه بالعربي)
+# مع target_price (سعر مستهدف) و/أو drop_pct (نسبة خاصة). تنبيه رجوع التوفر يشمل كل عناصرها.
+# [[watch]]
+# sku = "100392608"
+# target_price = 2800
+#
+# [[watch]]
+# category = "2-212"
+# drop_pct = 3
