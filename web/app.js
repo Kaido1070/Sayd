@@ -11,7 +11,7 @@ const ICON = (id, cls = "icon") => `<svg class="${cls}" aria-hidden="true"><use 
 const NOIMG = `<div class="noimg" role="img" aria-label="لا توجد صورة">${ICON("img", "")}</div>`;
 
 let deals = [], dealById = new Map(), groups = [], offers = [], cats = [], preorders = [], updated = null, total = 0;
-let state = { cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
+let state = { dept: "all", cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
 let index = null, indexing = null, current = null, loaded = false;
 const shards = {};
 
@@ -261,6 +261,7 @@ function resultCard(x) {
 
 // ---------- التخفيضات ----------
 function matches(d) {
+  if (state.dept !== "all" && d.d !== state.dept) return false;
   if (state.cat !== "all" && d.c !== state.cat) return false;
   if (state.stock && !d.st) return false;
   return d.p >= state.min && d.p <= state.max;
@@ -309,12 +310,16 @@ function renderSkeleton(el, n = 8) {
 }
 
 function activeFilters() {
-  return (state.cat !== "all" ? 1 : 0) + (state.min > 0 || state.max < Infinity ? 1 : 0) + (state.stock ? 1 : 0);
+  return (state.dept !== "all" ? 1 : 0) + (state.min > 0 || state.max < Infinity ? 1 : 0) + (state.stock ? 1 : 0);
 }
 
 function render() {
-  // رابط قديم بفئة لم تعد موجودة يعرض الكل بدل قائمة فارغة
-  if (loaded && state.cat !== "all" && !cats.includes(state.cat)) { state.cat = "all"; syncHomeUrl(); }
+  // رابط قديم بقسم أو فئة لم تعد موجودة يعرض الأوسع بدل قائمة فارغة
+  if (loaded) {
+    const subs = (cats.find(([d]) => d === state.dept) || [])[1];
+    if (state.dept !== "all" && !subs) { state.dept = "all"; state.cat = "all"; syncHomeUrl(); }
+    else if (state.cat !== "all" && !(subs || []).includes(state.cat)) { state.cat = "all"; syncHomeUrl(); }
+  }
   const list = visible();
   const active = activeFilters();
   $("filter-count").hidden = !active; $("filter-count").textContent = active;
@@ -329,17 +334,33 @@ function render() {
     $("more-zone").hidden = list.length <= state.limit;
     $("shown").textContent = `المعروض ${Math.min(state.limit, list.length)} من ${list.length}`;
   }
-  document.querySelectorAll("#categories button").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.cat === state.cat)));
+  renderChips();
 }
 
+// الأقسام ثم فئات القسم المختار، بترتيب قائمة إكسترا (cats: [[القسم، [الفئات]]])
+const SEP = "\u001f";
 function renderCats() {
-  const counts = {};
-  for (const g of groups) for (const c of new Set(g.all.map((d) => d.c))) counts[c] = (counts[c] || 0) + 1;
-  const list = cats.filter((c) => counts[c]);
-  $("categories").innerHTML = ['<button type="button" data-cat="all" aria-pressed="true">الكل</button>']
-    .concat(list.map((c) => `<button type="button" data-cat="${esc(c)}" aria-pressed="false">${esc(c)}</button>`)).join("");
-  $("categories").hidden = list.length < 2;
-  $("category-filter").innerHTML = '<option value="all">كل الفئات</option>' + list.map((c) => `<option>${esc(c)}</option>`).join("");
+  $("category-filter").innerHTML = '<option value="all">كل الأقسام</option>' + cats.map(([d, subs]) =>
+    `<optgroup label="${esc(d)}"><option value="${esc(d + SEP)}">كل ${esc(d)}</option>${
+      subs.map((c) => `<option value="${esc(d + SEP + c)}">${esc(c)}</option>`).join("")}</optgroup>`).join("");
+}
+function renderChips() {
+  const chip = (attr, val, label, on) => `<button type="button" ${attr}="${esc(val)}" aria-pressed="${on}">${esc(label)}</button>`;
+  $("categories").innerHTML = chip("data-dept", "all", "الكل", state.dept === "all") +
+    cats.map(([d]) => chip("data-dept", d, d, state.dept === d)).join("");
+  $("categories").hidden = cats.length < 2;
+  const subs = (cats.find(([d]) => d === state.dept) || [])[1] || [];
+  $("subcats").innerHTML = subs.length > 1
+    ? chip("data-cat", "all", "كل " + state.dept, state.cat === "all") + subs.map((c) => chip("data-cat", c, c, state.cat === c)).join("")
+    : "";
+  $("subcats").hidden = subs.length < 2;
+  // القسم والفئة المختاران يبقيان ظاهرين في صفّيهما
+  for (const row of [$("categories"), $("subcats")]) {
+    const on = row.querySelector('[aria-pressed="true"]');
+    if (!on || row.hidden) continue;
+    const r = row.getBoundingClientRect(), c = on.getBoundingClientRect();
+    if (c.left < r.left || c.right > r.right) row.scrollLeft += (c.left + c.width / 2) - (r.left + r.width / 2);
+  }
 }
 
 // ---------- صفحة المنتج ----------
@@ -579,7 +600,8 @@ window.addEventListener("pagehide", savePos);
 // رابط التخفيضات بحالة التصفية الحالية
 function homeUrl() {
   const q = new URLSearchParams();
-  if (state.cat !== "all") q.set("cat", state.cat);
+  if (state.dept !== "all") q.set("dept", state.dept);
+  if (state.dept !== "all" && state.cat !== "all") q.set("cat", state.cat);
   if (state.sort !== "new") q.set("sort", state.sort);
   if (state.min > 0) q.set("min", state.min);
   if (state.max < Infinity) q.set("max", state.max);
@@ -623,7 +645,8 @@ function route(restore = true) {
   switchTab(tab);
   if (tab === "products") {
     const sp = u.searchParams, min = Number(sp.get("min")), max = Number(sp.get("max"));
-    state.cat = sp.get("cat") || "all";
+    state.dept = sp.get("dept") || "all";
+    state.cat = (state.dept !== "all" && sp.get("cat")) || "all";
     state.sort = SORTS[sp.get("sort")] ? sp.get("sort") : "new";
     state.min = min > 0 ? min : 0;
     state.max = sp.get("max") !== null && max >= 0 ? max : Infinity;
@@ -663,7 +686,7 @@ function openTab(name) {
   savePos();
 }
 function clearFilters() {
-  state = { ...state, cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
+  state = { ...state, dept: "all", cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
   render(); syncHomeUrl();
 }
 
@@ -703,14 +726,15 @@ $("sort").addEventListener("change", (e) => { state.sort = e.target.value; state
 $("more").addEventListener("click", () => { state.limit += PAGE; render(); savePos(); });
 $("results-more").addEventListener("click", () => { state.resLimit += PAGE; renderResults(); savePos(); });
 $("filter-open").addEventListener("click", () => {
-  $("category-filter").value = state.cat; $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
+  $("category-filter").value = state.dept === "all" ? "all" : state.dept + SEP + (state.cat === "all" ? "" : state.cat); $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
   $("stock-only").checked = state.stock; $("budget-error").hidden = true; $("filters").showModal();
 });
 $("filter-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const min = Math.max(0, Number($("min-price").value) || 0), max = $("max-price").value === "" ? Infinity : Number($("max-price").value);
   if (max < min) { $("budget-error").hidden = false; return; }
-  state = { ...state, cat: $("category-filter").value, min, max, stock: $("stock-only").checked, limit: PAGE };
+  const [dept, cat] = $("category-filter").value === "all" ? ["all", ""] : $("category-filter").value.split(SEP);
+  state = { ...state, dept, cat: cat || "all", min, max, stock: $("stock-only").checked, limit: PAGE };
   $("filters").close(); render(); syncHomeUrl();
 });
 $("reset").addEventListener("click", () => {
@@ -731,6 +755,7 @@ document.addEventListener("click", async (e) => {
   }
   const b = e.target.closest("button");
   if (!b) return;
+  if (b.dataset.dept) { state.dept = b.dataset.dept; state.cat = "all"; state.limit = PAGE; render(); syncHomeUrl(); }
   if (b.dataset.cat) { state.cat = b.dataset.cat; state.limit = PAGE; render(); syncHomeUrl(); }
   if (b.dataset.tab) openTab(b.dataset.tab);
   if (b.dataset.close) $(b.dataset.close).close();

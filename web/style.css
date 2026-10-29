@@ -121,7 +121,11 @@ h1,h2,h3{margin:0;line-height:1.5;overflow-wrap:anywhere}
 .seg-btn[aria-selected=true]:after{content:"";position:absolute;right:0;left:0;bottom:-1px;height:2px;border-radius:2px;background:var(--gold)}
 .count{font-size:11.5px;font-weight:700;min-width:22px;padding:1px 7px;border-radius:8px;background:var(--gold-soft);color:var(--gold-text)}
 .toolbar{display:flex;align-items:center;justify-content:space-between;gap:14px;margin-bottom:6px}
+.chip-rows{min-width:0;flex:1}
 .chips{display:flex;gap:8px;overflow-x:auto;scrollbar-width:none;padding:4px 2px 8px;min-width:0}
+.chips.sub{padding-top:0}
+.chips.sub button{padding:6px 13px;font-size:12.5px;background:var(--surface-2)}
+.chips.sub button[aria-pressed=true]{background:var(--gold-soft);color:var(--gold-text);border-color:var(--gold);box-shadow:none;font-weight:700}
 .chips::-webkit-scrollbar{display:none}
 .chips button{flex-shrink:0;padding:8px 15px;border-radius:999px;font-size:13px;background:var(--surface);border:1px solid var(--line);color:var(--ink-2);transition:all .18s}
 .chips button:hover{border-color:var(--line-2)}

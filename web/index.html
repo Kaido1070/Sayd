@@ -84,7 +84,10 @@
 
       <section id="products-panel" role="tabpanel" aria-labelledby="products-tab">
         <div class="toolbar">
-          <div class="chips" id="categories" aria-label="الفئات"></div>
+          <div class="chip-rows">
+            <div class="chips" id="categories" aria-label="الأقسام"></div>
+            <div class="chips sub" id="subcats" aria-label="فئات القسم" hidden></div>
+          </div>
           <div class="tools">
             <label class="select"><span class="sr-only">الترتيب</span>
               <select id="sort">

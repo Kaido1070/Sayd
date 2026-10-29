@@ -38,9 +38,10 @@ def _r(v):
 def _deal(d):
     row = d["row"]
     specs = json.loads(row["specs"] or "[]")
+    dept, cat = categories.place(row["category"], row["name"])
     return {
         "id": row["sku"], "n": row["name"], "m": row["model"] or "", "sp": specs[:2],
-        "c": categories.label(row["category"], row["name"]), "img": row["image"] or "", "u": row["url"],
+        "d": dept, "c": cat, "img": row["image"] or "", "u": row["url"],
         "p": _r(d["price"]), "o": _r(d["basis"]), "sv": _r(d["saving"]), "pc": round(d["pct"], 1),
         "st": 1 if row["in_stock"] else 0, "t": d["since"], "mp": 1 if row["marketplace"] else 0,
         "sl": row["seller"] or "", "lw": 1 if d["lowest"] else 0, "fs": d["first_seen"],
@@ -71,7 +72,7 @@ def product_records(db, active_deals):
         d = deal_by.get(sku)
         rec = {
             "n": row["name"], "m": row["model"] or "", "sp": json.loads(row["specs"] or "[]")[:3],
-            "c": categories.label(row["category"], row["name"]), "img": row["image"] or "", "u": row["url"],
+            "c": categories.place(row["category"], row["name"])[1], "img": row["image"] or "", "u": row["url"],
             "sl": row["seller"] or "", "mp": 1 if row["marketplace"] else 0,
             "p": _r(row["price"]), "st": 0 if row["delisted"] else (1 if row["in_stock"] else 0), "dl": row["delisted"] or 0,
             "fs": row["first_seen"], "ls": row["last_seen"], "pr": periods.get(sku, []),
@@ -101,7 +102,7 @@ def preorder(db):
             continue
         out.append({"id": sku, "n": row["name"], "m": row["model"] or "", "img": row["image"] or "", "u": row["url"],
                     "p": _r(row["price"]), "st": 1 if row["in_stock"] else 0, "mp": 1 if row["marketplace"] else 0,
-                    "sl": row["seller"] or "", "c": categories.label(row["category"], row["name"])})
+                    "sl": row["seller"] or "", "c": categories.place(row["category"], row["name"])[1]})
     return sorted(out, key=lambda x: (-x["st"], x["n"]))
 
 
@@ -201,11 +202,13 @@ def build(db, cfg, out):
 
     current = deals_mod.active(db)
     items = [_deal(d) for d in current]
-    cats = Counter(i["c"] for i in items)
+    used = defaultdict(set)
+    for i in items:
+        used[i["d"]].add(i["c"])
     _dump(tmp / "data" / "deals.json", {
         "updated": ts,
         "products": db.conn.execute("SELECT COUNT(*) FROM products WHERE delisted=0").fetchone()[0],
-        "cats": [c for c, _ in cats.most_common()],
+        "cats": categories.order(db.get("menu"), used),  # [[القسم، [الفئات]]] بترتيب قائمة إكسترا
         "deals": sorted(items, key=lambda i: i["t"], reverse=True),
         "preorder": preorder(db),
     })

@@ -169,6 +169,7 @@ class Runner:
                 self.db.replace_sitemap(mapping)
                 self.db.set("last_sitemap_at", now())
                 self.db.commit()
+            self.menu_refresh()
         rows = self.db.sitemap_unseen(since, now(), sc["sitemap_mp_batch"])
         self.phases.append(f"sitemap:{len(rows)}")
         blocked = 0
@@ -215,6 +216,18 @@ class Runner:
                 break
             _, products = self.listing("watch", skus=skus[i:i + 50])
             self.process(products)
+
+    def menu_refresh(self):
+        """ترتيب أقسام إكسترا وفئاتها (مرة يومياً مع خريطة الموقع). يُحفظ فقط إذا بدا سليماً."""
+        try:
+            menu = self.ex.menu()
+        except (FetchError, Disallowed) as e:
+            self.error("menu", e)
+            return
+        if len(menu) >= 5:
+            self.db.set("menu", menu)
+        else:
+            self.error("menu", "قائمة إكسترا غير مفهومة")
 
     def preorder_scan(self):
         """منتجات «الحجز المسبق» الحالية في إكسترا (طلب واحد عادة). القائمة تُستبدل كاملة فقط

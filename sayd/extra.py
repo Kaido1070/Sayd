@@ -17,6 +17,7 @@ from .net import FetchError
 log = logging.getLogger("sayd.extra")
 
 BASE = "https://www.extra.com"
+MENU_SKIP = re.compile(r"عرض الكل|استعرض الكل|تسوق الكل|شاهد الكل|View All|بطاقة هدايا|حسب الماركه|حسب الماركة|الماركات|Outlet|اوتليت|Buying Guide")
 LOCALE = "ar-sa"
 DISCOVERY_PAGE = f"{BASE}/{LOCALE}/mobiles-tablets/c/2"
 AMPLIENCE_JSON = "https://extra.cdn.content.amplience.net/content/id/{id}?depth=all&format=inlined&locale=ar-SA"
@@ -361,6 +362,26 @@ class Extra:
         )
 
     # ---------- خريطة الموقع ----------
+    def menu(self):
+        """أقسام قائمة إكسترا وفئاتها بترتيبها في الموقع: [(القسم، [الفئات])]. فارغة إذا تغيّر شكل الصفحة."""
+        r = self.http.get(BASE + "/ar-sa/")
+        for m in re.finditer(r'<script[^>]*application/ld\+json[^>]*>(.*?)</script>', r.text, re.S):
+            if "hasOfferCatalog" not in m.group(1):
+                continue
+            try:
+                data = json.loads(m.group(1))
+            except ValueError:
+                return []
+            out = []
+            for node in data.get("hasOfferCatalog") or []:
+                name = _text(node.get("name") or "")
+                if not name or "/cp/" not in (node.get("url") or ""):
+                    continue  # روابط ترويجية وخدمات وليست أقساماً
+                kids = [_text(k.get("name") or "") for k in node.get("itemListElement") or [] if isinstance(k, dict)]
+                out.append([name, [k for k in kids if k and not MENU_SKIP.search(k)]])
+            return out
+        return []
+
     def sitemap_products(self):
         """كل روابط المنتجات في خريطة الموقع: {sku: url}. تُستخدم لاكتشاف ما لا يظهر في محرك البحث."""
         index = self.http.get(SITEMAP_INDEX).text
