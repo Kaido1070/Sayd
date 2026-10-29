@@ -16,7 +16,7 @@ let index = null, indexing = null, homeScroll = 0, current = null;
 const shards = {};
 
 // ---------- أدوات ----------
-const norm = (s) => String(s || "").toLowerCase()
+const norm = (s) => String(s || "").toLowerCase().replace(/[\u200b-\u200f\u202a-\u202e\u2066-\u2069]/g, " ")
   .replace(/[ً-ٟـ]/g, "").replace(/[أإآٱ]/g, "ا").replace(/ى/g, "ي").replace(/ة/g, "ه").replace(/ؤ/g, "و").replace(/ئ/g, "ي")
   .replace(/[٠-٩]/g, (d) => "٠١٢٣٤٥٦٧٨٩".indexOf(d)).replace(/[-_/\\.,،؛:;()«»"'+|*!؟?]+/g, " ").replace(/\s+/g, " ").trim();
 const compact = (s) => norm(s).replace(/[^a-z0-9]/g, "");

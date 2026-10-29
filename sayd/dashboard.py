@@ -13,6 +13,7 @@ from .db import now, ts_minus
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
+JUNK_BRANDS = {"القيمة الإفتراضية", "القيمة الافتراضية"}  # قيمة فارغة من المتجر وليست علامة تجارية
 
 
 def template_hash():
@@ -194,7 +195,8 @@ def build(db, cfg, out):
 
     # فهرس البحث لكل المنتجات (يُحمّل عند أول بحث فقط): [الرمز، الاسم، الموديل، السعر، الحالة، العلامة]
     _dump(tmp / "data" / "index.json", {"updated": ts, "items": [
-        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0), r["brand"] or ""]
+        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0),
+         "" if (r["brand"] or "") in JUNK_BRANDS else r["brand"] or ""]
         for r in db.conn.execute("SELECT sku, name, model, price, in_stock, delisted, brand FROM products ORDER BY sku")]})
     # صفحة كل منتج: ملف صغير مشترك بين ~33 منتجاً يُحمّل عند فتح الصفحة فقط
     for key, recs in product_records(db, current).items():
