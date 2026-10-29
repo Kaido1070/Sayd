@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<meta name="theme-color" content="#f5f3ef" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#0a0a0b" media="(prefers-color-scheme: dark)">
+<meta name="theme-color" content="#f6f4ef" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1c1c1a" media="(prefers-color-scheme: dark)">
 <meta name="color-scheme" content="light dark">
 <meta name="description" content="أسعار منتجات إكسترا كما رُصدت، وسجل سعر كل منتج.">
 <title>صيد</title>
@@ -56,17 +56,13 @@
 <main>
   <section class="hero" id="hero">
     <div class="wrap hero-in">
-      <h1 class="hero-title" id="hero-title">السعر الحقيقي لكل منتج في إكسترا</h1>
+      <h1 class="hero-title" id="hero-title">تتبّع أسعار منتجات إكسترا</h1>
       <form class="search" id="search-form" role="search" autocomplete="off">
         <svg class="icon s-icon" aria-hidden="true"><use href="#i-search"/></svg>
-        <input id="search" type="search" placeholder="اسم المنتج أو الموديل أو رابطه من إكسترا" aria-label="ابحث في منتجات إكسترا" enterkeyhint="search" spellcheck="false">
+        <input id="search" type="search" placeholder="اسم المنتج أو رابطه في إكسترا" aria-label="ابحث في منتجات إكسترا" enterkeyhint="search" spellcheck="false">
         <button class="s-clear" id="search-clear" type="button" aria-label="مسح البحث" hidden>×</button>
       </form>
-      <div class="stats" id="stats" hidden>
-        <span><b id="st-products">—</b> منتج مرصود</span>
-        <span><b id="st-deals">—</b> تخفيض مؤكد</span>
-        <span class="live"><i></i><span id="st-updated"></span></span>
-      </div>
+      <p class="updated" id="updated" role="status" hidden></p>
     </div>
   </section>
 

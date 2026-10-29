@@ -126,10 +126,7 @@ async function load() {
     buildGroups();
     $("deal-count").textContent = groups.length;
     $("offer-count").textContent = offers.length;
-    $("st-deals").textContent = money(groups.length);
-    $("st-products").textContent = total ? money(total) : "—";
-    if (updated) $("st-updated").textContent = "آخر تحديث " + ago(updated);
-    $("stats").hidden = false;
+    showUpdated();
     renderCats(); render(); renderCoupons(); renderEnded();
     if (state.q) renderResults();
   } catch (e) {
@@ -137,6 +134,19 @@ async function load() {
     $("result-count").textContent = "";
   }
 }
+
+// «آخر تحديث قبل …» من وقت النشر الحقيقي. النقطة الخضراء فقط إذا كانت البيانات حديثة،
+// وإلا يُكتب «متأخر» نصًا (الموقع يُنشر كل ساعتين تقريبًا)
+const STALE_MS = 3 * HOUR;
+function showUpdated() {
+  const el = $("updated");
+  if (!updated) { el.hidden = true; return; }
+  const late = Date.now() - ms(updated) > STALE_MS;
+  el.textContent = "آخر تحديث " + ago(updated) + (late ? " · متأخر" : "");
+  el.classList.toggle("fresh", !late);
+  el.hidden = false;
+}
+setInterval(showUpdated, 60000);
 
 // فهرس كل المنتجات المرصودة: يُحمّل عند أول استخدام للبحث فقط
 function loadIndex() {
@@ -222,7 +232,7 @@ async function renderResults() {
       return;
     }
   } else lastHits = search(state.q);
-  $("results-note").textContent = lastHits.length ? `${money(lastHits.length)} منتج` : "";
+  $("results-note").textContent = (lastHits.length ? `${money(lastHits.length)} نتيجة` : "") + (total ? ` من ${money(total)} منتج مرصود` : "");
   $("results-grid").innerHTML = lastHits.length
     ? lastHits.slice(0, state.resLimit).map(resultCard).join("")
     : '<div class="empty"><h3>لا يوجد منتج مرصود بهذا الاسم</h3><p>جرّب اسمًا أقصر أو رقم الموديل أو الصق رابط المنتج من إكسترا.</p></div>';
