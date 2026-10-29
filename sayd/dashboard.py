@@ -107,6 +107,8 @@ def build(db, cfg, out):
         "deals": sorted(items, key=lambda i: i["t"], reverse=True),
     })
     _dump(tmp / "data" / "offers.json", {"updated": ts, "offers": offers_payload(db, ts)})
+    # ملف فارغ مكان ملف قديم كان يحتوي سجل التشغيل؛ يستبدل النسخة المخزنة في ذاكرة Cloudflare
+    _dump(tmp / "data" / "summary.json", {})
 
     # سجل الأسعار الحقيقي لمنتجات العروض فقط
     shards = defaultdict(dict)
