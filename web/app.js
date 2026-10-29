@@ -12,7 +12,7 @@ const NOIMG = `<div class="noimg" role="img" aria-label="لا توجد صورة"
 
 let deals = [], dealById = new Map(), groups = [], offers = [], cats = [], preorders = [], updated = null, total = 0;
 let state = { cat: "all", min: 0, max: Infinity, stock: false, sort: "new", limit: PAGE, tab: "products", q: "", raw: "", resLimit: PAGE };
-let index = null, indexing = null, homeScroll = 0, current = null;
+let index = null, indexing = null, current = null, loaded = false;
 const shards = {};
 
 // ---------- أدوات ----------
@@ -128,8 +128,10 @@ async function load() {
     $("offer-count").textContent = offers.length;
     showUpdated();
     $("preorder-count").textContent = preorders.length;
+    loaded = true;
     renderCats(); render(); renderCoupons(); renderPreorder();
     if (state.q) renderResults();
+    else if (!current) applyScroll();
   } catch (e) {
     $("grid").innerHTML = `<div class="empty"><h3>تعذّر تحميل البيانات</h3><p>تحقق من الاتصال وحاول مرة ثانية.</p><button class="btn3d primary" type="button" data-retry>إعادة المحاولة</button></div>`;
     $("result-count").textContent = "";
@@ -238,6 +240,7 @@ async function renderResults() {
     ? lastHits.slice(0, state.resLimit).map(resultCard).join("")
     : '<div class="empty"><h3>لا يوجد منتج مرصود بهذا الاسم</h3><p>جرّب اسمًا أقصر أو رقم الموديل أو الصق رابط المنتج من إكسترا.</p></div>';
   $("results-more-zone").hidden = lastHits.length <= state.resLimit;
+  applyScroll();
 }
 
 function resultCard(x) {
@@ -343,11 +346,11 @@ function specChip(s) {
   const i = s.indexOf(":");
   return i < 0 ? `<li>${esc(s)}</li>` : `<li>${esc(s.slice(0, i))}: <bdi>${esc(s.slice(i + 1).trim())}</bdi></li>`;
 }
-async function showProduct(id) {
+async function showProduct(id, range = "m1") {
   const view = $("product-view");
-  current = { id, r: null, range: "m1" };
+  current = { id, r: null, range: RANGES.some((x) => x[0] === range) ? range : "m1" };
   $("home").hidden = true; view.hidden = !!state.q; $("hero").classList.add("compact");
-  view.innerHTML = `<a class="back" href="/" data-link>${ICON("back")}الرئيسية</a><div class="pd-wrap"><p class="found-note">جارٍ التحميل…</p></div>`;
+  view.innerHTML = `<a class="back" href="/" data-back>${ICON("back")}رجوع</a><div class="pd-wrap"><p class="found-note">جارٍ التحميل…</p></div>`;
   let r;
   try { r = (await shard(id))[id]; }
   catch { view.querySelector(".pd-wrap").innerHTML = '<div class="empty"><h3>تعذّر تحميل المنتج</h3><button class="btn3d primary" type="button" data-reload>إعادة المحاولة</button></div>'; return; }
@@ -382,7 +385,7 @@ async function showProduct(id) {
         ${variants}
         <section class="pd-chart" aria-labelledby="chart-title">
           <div class="chart-head"><h3 id="chart-title">سجل السعر</h3>
-            <div class="ranges" role="group" aria-label="مدة الرسم">${RANGES.map(([k, l]) => `<button type="button" data-range="${k}" aria-pressed="${k === "m1"}">${l}</button>`).join("")}</div>
+            <div class="ranges" role="group" aria-label="مدة الرسم">${RANGES.map(([k, l]) => `<button type="button" data-range="${k}" aria-pressed="${k === current.range}">${l}</button>`).join("")}</div>
           </div>
           <div class="chart-wrap" id="chart"></div>
           <p class="chart-sum" id="chart-sum"></p>
@@ -391,6 +394,7 @@ async function showProduct(id) {
       </div>
     </div>`;
   drawHistory();
+  applyScroll();
 }
 
 // الرسم: كل فترة سعر خط أفقي من أول رصد إلى آخر رصد لها، بلا قيم مختلقة.
@@ -545,28 +549,100 @@ function renderPreorder() {
 }
 
 // ---------- التنقل ----------
-function route() {
-  const m = location.pathname.match(/^\/p\/([^/]+)\/?$/);
-  if (m) { showProduct(decodeURIComponent(m[1]).toUpperCase()); return; }
+// لكل صفحة رابط: / (التخفيضات مع الفئة والترتيب والتصفية)، /coupons، /preorder، /search?q=، /p/<رمز>?range=
+// موضع التمرير وعدد المعروض يُحفظان لكل رابط، فالتحديث أو الرجوع يعيدك لنفس المكان.
+const TABS = { "/": "products", "/coupons": "coupons", "/preorder": "preorder" };
+const TAB_PATH = { products: "/", coupons: "/coupons", preorder: "/preorder" };
+const TITLES = { products: "التخفيضات", coupons: "الكوبونات", preorder: "طلب مسبق" };
+const here = () => location.pathname + location.search;
+const posKey = (url) => "pos:" + url;
+let pendingY = null;
+if ("scrollRestoration" in history) history.scrollRestoration = "manual";
+
+function savePos() {
+  try { sessionStorage.setItem(posKey(here()), JSON.stringify({ y: Math.round(scrollY), limit: state.limit, resLimit: state.resLimit })); } catch { /* التخزين غير متاح */ }
+}
+function readPos() {
+  try { return JSON.parse(sessionStorage.getItem(posKey(here())) || "null"); } catch { return null; }
+}
+function applyScroll() {
+  if (pendingY === null) return;
+  const y = pendingY; pendingY = null;
+  requestAnimationFrame(() => window.scrollTo(0, y));
+}
+let saving;
+window.addEventListener("scroll", () => { clearTimeout(saving); saving = setTimeout(savePos, 150); }, { passive: true });
+window.addEventListener("pagehide", savePos);
+
+// رابط التخفيضات بحالة التصفية الحالية
+function homeUrl() {
+  const q = new URLSearchParams();
+  if (state.cat !== "all") q.set("cat", state.cat);
+  if (state.sort !== "new") q.set("sort", state.sort);
+  if (state.min > 0) q.set("min", state.min);
+  if (state.max < Infinity) q.set("max", state.max);
+  if (state.stock) q.set("stock", "1");
+  const s = q.toString();
+  return "/" + (s ? "?" + s : "");
+}
+function syncHomeUrl() {
+  if (current || state.q || state.tab !== "products") return;
+  const url = homeUrl();
+  if (url !== here()) { history.replaceState(history.state, "", url); savePos(); }
+}
+
+function route(restore = true) {
+  const u = new URL(location.href);
+  const path = u.pathname.replace(/\/+$/, "") || "/";
+  const pos = restore ? readPos() : null;
+  state.limit = pos?.limit || PAGE; state.resLimit = pos?.resLimit || PAGE;
+  pendingY = pos ? pos.y : 0;
+
+  if (path === "/search") {
+    current = null;
+    const q = u.searchParams.get("q") || "";
+    $("search").value = q; state.raw = q; state.q = norm(q);
+    $("hero").classList.remove("compact");
+    $("product-view").hidden = true; $("product-view").innerHTML = "";
+    document.title = q ? `بحث: ${q} | صيد` : "صيد";
+    renderResults();
+    if (!q.trim()) { history.replaceState(history.state, "", "/"); route(false); }
+    return;
+  }
+  clearSearch();
+  const m = path.match(/^\/p\/([^/]+)$/);
+  if (m) { showProduct(decodeURIComponent(m[1]).toUpperCase(), u.searchParams.get("range") || "m1"); return; }
+
   current = null;
-  document.title = "صيد";
   $("hero").classList.remove("compact");
   $("product-view").hidden = true; $("product-view").innerHTML = "";
-  $("home").hidden = !!state.q;
-  requestAnimationFrame(() => window.scrollTo(0, homeScroll));
+  $("home").hidden = false;
+  const tab = TABS[path] || "products";
+  switchTab(tab);
+  if (tab === "products") {
+    const sp = u.searchParams, min = Number(sp.get("min")), max = Number(sp.get("max"));
+    state.cat = sp.get("cat") || "all";
+    state.sort = SORTS[sp.get("sort")] ? sp.get("sort") : "new";
+    state.min = min > 0 ? min : 0;
+    state.max = sp.get("max") !== null && max >= 0 ? max : Infinity;
+    state.stock = sp.get("stock") === "1";
+    $("sort").value = state.sort;
+  }
+  document.title = tab === "products" ? "صيد" : `${TITLES[tab]} | صيد`;
+  if (loaded) { render(); applyScroll(); }
 }
 function clearSearch() {
-  $("search").value = ""; state.raw = ""; state.q = ""; state.resLimit = PAGE;
+  $("search").value = ""; state.raw = ""; state.q = "";
   $("results").hidden = true; $("search-clear").hidden = true;
 }
+// انتقال داخلي: يحفظ موضع الصفحة الحالية، ويفتح الجديدة من أعلاها
 function go(url) {
-  if (!current && !state.q) homeScroll = window.scrollY;
-  clearSearch();
-  if (url !== location.pathname) history.pushState(null, "", url);
-  if (url.startsWith("/p/")) window.scrollTo(0, 0);
-  route();
+  savePos();
+  if (url !== here()) history.pushState({ internal: true }, "", url);
+  window.scrollTo(0, 0);
+  route(false);
 }
-window.addEventListener("popstate", () => { clearSearch(); route(); });
+window.addEventListener("popstate", () => route(true));
 
 function switchTab(name) {
   state.tab = name;
@@ -575,12 +651,23 @@ function switchTab(name) {
   });
   for (const t of ["products", "coupons", "preorder"]) $(t + "-panel").hidden = name !== t;
 }
+function openTab(name) {
+  if (state.tab === name) return;
+  savePos();
+  const url = name === "products" ? homeUrl() : TAB_PATH[name];
+  history.pushState({ internal: true }, "", url);
+  switchTab(name);
+  document.title = name === "products" ? "صيد" : `${TITLES[name]} | صيد`;
+  savePos();
+}
 function clearFilters() {
   state = { ...state, cat: "all", min: 0, max: Infinity, stock: false, limit: PAGE };
-  render();
+  render(); syncHomeUrl();
 }
 
+// البحث: أول حرف يفتح /search?q= كصفحة جديدة، وما بعده يحدّث الرابط نفسه
 let typing;
+function searchUrl(v) { return "/search?q=" + encodeURIComponent(v.trim()); }
 $("search").addEventListener("focus", loadIndex, { once: true });
 $("search").addEventListener("input", (e) => {
   clearTimeout(typing);
@@ -589,20 +676,30 @@ $("search").addEventListener("input", (e) => {
   if (s && s.url) { go(plink(s.sku)); e.target.blur(); return; }  // لصق رابط منتج يفتح صفحته مباشرة
   typing = setTimeout(() => {
     state.raw = v; state.q = norm(v); state.resLimit = PAGE;
+    if (!state.q) { endSearch(); return; }
+    if (location.pathname !== "/search") { savePos(); history.pushState({ internal: true, search: true }, "", searchUrl(v)); window.scrollTo(0, 0); }
+    else history.replaceState(history.state, "", searchUrl(v));
+    document.title = `بحث: ${v.trim()} | صيد`;
+    current = null; $("hero").classList.remove("compact");
     renderResults();
-    if (!state.q) route();
-  }, 140);
+  }, 160);
 });
+// مسح البحث يرجع للصفحة التي كنت فيها قبله
+function endSearch() {
+  if (location.pathname !== "/search") { clearSearch(); return; }
+  if (history.state?.search) history.back();
+  else { history.replaceState(null, "", "/"); route(false); }
+}
 $("search-form").addEventListener("submit", (e) => {
   e.preventDefault();
   const s = skuFromInput($("search").value);
   if (s) go(plink(s.sku));
   $("search").blur();
 });
-$("search-clear").addEventListener("click", () => { clearSearch(); route(); $("search").focus(); });
-$("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.limit = PAGE; render(); });
-$("more").addEventListener("click", () => { state.limit += PAGE; render(); });
-$("results-more").addEventListener("click", () => { state.resLimit += PAGE; renderResults(); });
+$("search-clear").addEventListener("click", () => { endSearch(); $("search").value = ""; $("search").focus(); });
+$("sort").addEventListener("change", (e) => { state.sort = e.target.value; state.limit = PAGE; render(); syncHomeUrl(); });
+$("more").addEventListener("click", () => { state.limit += PAGE; render(); savePos(); });
+$("results-more").addEventListener("click", () => { state.resLimit += PAGE; renderResults(); savePos(); });
 $("filter-open").addEventListener("click", () => {
   $("category-filter").value = state.cat; $("min-price").value = state.min || ""; $("max-price").value = state.max === Infinity ? "" : state.max;
   $("stock-only").checked = state.stock; $("budget-error").hidden = true; $("filters").showModal();
@@ -612,12 +709,18 @@ $("filter-form").addEventListener("submit", (e) => {
   const min = Math.max(0, Number($("min-price").value) || 0), max = $("max-price").value === "" ? Infinity : Number($("max-price").value);
   if (max < min) { $("budget-error").hidden = false; return; }
   state = { ...state, cat: $("category-filter").value, min, max, stock: $("stock-only").checked, limit: PAGE };
-  $("filters").close(); render();
+  $("filters").close(); render(); syncHomeUrl();
 });
 $("reset").addEventListener("click", () => {
   $("category-filter").value = "all"; $("min-price").value = ""; $("max-price").value = ""; $("stock-only").checked = false; $("budget-error").hidden = true;
 });
 document.addEventListener("click", async (e) => {
+  const back = e.target.closest("a[data-back]");
+  if (back && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
+    e.preventDefault();
+    if (history.state?.internal) history.back(); else go("/");  // يرجع لنفس مكانك في القائمة
+    return;
+  }
   const a = e.target.closest("a[data-link]");
   if (a && !e.ctrlKey && !e.metaKey && !e.shiftKey && e.button === 0) {
     e.preventDefault();
@@ -626,10 +729,13 @@ document.addEventListener("click", async (e) => {
   }
   const b = e.target.closest("button");
   if (!b) return;
-  if (b.dataset.cat) { state.cat = b.dataset.cat; state.limit = PAGE; render(); }
-  if (b.dataset.tab) switchTab(b.dataset.tab);
+  if (b.dataset.cat) { state.cat = b.dataset.cat; state.limit = PAGE; render(); syncHomeUrl(); }
+  if (b.dataset.tab) openTab(b.dataset.tab);
   if (b.dataset.close) $(b.dataset.close).close();
-  if (b.dataset.range && current) { current.range = b.dataset.range; drawHistory(); }
+  if (b.dataset.range && current) {
+    current.range = b.dataset.range; drawHistory();
+    history.replaceState(history.state, "", plink(current.id) + (current.range === "m1" ? "" : "?range=" + current.range));
+  }
   if (b.dataset.clear !== undefined) clearFilters();
   if (b.dataset.retry !== undefined) load();
   if (b.dataset.reload !== undefined) route();
@@ -649,7 +755,7 @@ document.querySelector(".seg").addEventListener("keydown", (e) => {
   if (next === undefined) return;
   e.preventDefault();
   const name = order[(next + order.length) % order.length];
-  switchTab(name); $(name + "-tab").focus();
+  openTab(name); $(name + "-tab").focus();
 });
 
 // ميلان البطاقات ثلاثي الأبعاد مع لمعة تتبع المؤشر (أجهزة الفأرة فقط، ويُلغى مع تقليل الحركة)
