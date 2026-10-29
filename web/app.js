@@ -221,6 +221,22 @@ document.addEventListener("click", (e) => {
   if (li && !e.target.closest("a")) openProduct(li.dataset.sku);
 });
 
+const clock = (ts) => new Date(ts).toLocaleString("ar-SA-u-nu-latn-ca-gregory", { timeZone: "Asia/Riyadh", weekday: "short", hour: "numeric", minute: "2-digit" });
+
+function nextRun(ts) {
+  // GitHub يشغّل الأداة عند الدقيقة 17 من كل ساعة
+  const d = new Date(Math.max(Date.parse(ts) - 10 * 60000, Date.now()));
+  if (d.getUTCMinutes() > 17) d.setUTCHours(d.getUTCHours() + 1);
+  d.setUTCMinutes(17, 0, 0);
+  return d;
+}
+
+function renderStatus() {
+  const s = summary;
+  const next = s.full_scan ? "المسح الأول جارٍ" : s.next_update ? `القادم ≈ ${clock(nextRun(s.next_update))}` : "";
+  $("#status").innerHTML = `آخر تحديث ${clock(s.generated_at)} (${ago(s.generated_at)})<br>${esc(next)} · ${fmt(s.products)} منتج`;
+}
+
 // ---------- البداية ----------
 (async function init() {
   try {
@@ -229,7 +245,15 @@ document.addEventListener("click", (e) => {
     $("#status").textContent = "لا توجد بيانات بعد";
     return;
   }
-  $("#status").innerHTML = `آخر تحديث ${ago(summary.generated_at)}<br>${fmt(summary.products)} منتج`;
+  renderStatus();
+  // إذا بقيت الصفحة مفتوحة: تحقق كل 10 دقائق وحدّث عند صدور بيانات جديدة
+  setInterval(async () => {
+    try {
+      const s = await getJSON("data/summary.json");
+      if (s.generated_at !== summary.generated_at) location.reload();
+      else renderStatus();
+    } catch (e) {}
+  }, 10 * 60 * 1000);
   const types = [...new Set(summary.offers.map((o) => o.provider_type))];
   $("#offers-type").innerHTML += types.map((t) => `<option>${esc(t)}</option>`).join("");
   ["#drops-stock", "#drops-lowest", "#drops-min"].forEach((s) => $(s).addEventListener("change", renderDrops));

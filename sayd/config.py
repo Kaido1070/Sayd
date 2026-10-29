@@ -16,5 +16,11 @@ def load(path=None):
         "ntfy_topic": os.environ.get("NTFY_TOPIC", "").strip(),
         "ntfy_server": os.environ.get("NTFY_SERVER", "").strip() or "https://ntfy.sh",
         "ntfy_token": os.environ.get("NTFY_TOKEN", "").strip(),
+        # إيميل عبر SMTP (مثلاً Gmail مع App Password)
+        "smtp_host": os.environ.get("SMTP_HOST", "").strip() or "smtp.gmail.com",
+        "smtp_port": os.environ.get("SMTP_PORT", "").strip() or "465",
+        "smtp_user": os.environ.get("SMTP_USER", "").strip(),
+        "smtp_password": os.environ.get("SMTP_PASSWORD", "").strip(),
+        "email_to": os.environ.get("EMAIL_TO", "").strip(),
     }
     return cfg

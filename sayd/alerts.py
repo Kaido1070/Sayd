@@ -121,6 +121,17 @@ def fmt_system(s, short=False):
     return f"⚠️ <b>Sayd: مشكلة في الجمع</b>\n{_e(s['message'])}"
 
 
+def subject(kind, p):
+    """عنوان مختصر للإيميل وإشعار ntfy."""
+    if kind == "price":
+        return f"Sayd 🔻 {p['drop_pct']:.0f}% — {p['name'][:60]}"
+    if kind == "restock":
+        return f"Sayd ✅ رجع متوفر — {p['name'][:60]}"
+    if kind == "offer":
+        return f"Sayd 🏷️ {'عرض جديد' if p['status'] == 'new' else 'تغيّر عرض'} — {p['text'][:50]}"
+    return "Sayd"
+
+
 FORMATTERS = {"price": fmt_price, "offer": fmt_offer, "restock": fmt_restock, "system": fmt_system}
 
 
@@ -145,7 +156,7 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
     if not pending:
         return 0
     if not notifier.configured:
-        log.warning("لا توجد قناة تنبيه مضبوطة (TELEGRAM_* أو NTFY_TOPIC)؛ %d تنبيه معلق", len(pending))
+        log.warning("لا توجد قناة تنبيه مضبوطة (TELEGRAM_* أو NTFY_TOPIC أو SMTP_*)؛ %d تنبيه معلق", len(pending))
         return 0
     items = [(r["id"], r["kind"], json.loads(r["payload"])) for r in pending]
     a = cfg["alerts"]
@@ -163,7 +174,7 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
     if len(normal) <= a["digest_threshold"]:
         for i, kind, p in normal:
             h = FORMATTERS[kind](p)
-            ch = notifier.send(h, plain(h), "Sayd", p.get("url") or p.get("link"))
+            ch = notifier.send(h, plain(h), subject(kind, p), p.get("url") or p.get("link"))
             if ch:
                 db.mark_sent([i], ts, ch)
                 sent += 1
