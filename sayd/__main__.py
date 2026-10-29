@@ -102,7 +102,7 @@ class Runner:
         إذا انحذف منتج قبله أثناء المسح. state_key يحفظ نقطة التوقف للاستكمال في التشغيل التالي."""
         st = (self.db.get(state_key) if state_key else None) or {"start": 0, "started_at": now(), "total": None}
         log.info("%s: من الموضع %d", label, st["start"])
-        seen, fails = set(), 0
+        seen, fails, suspicious = set(), 0, 0
         while self.left() > 90:
             total, products = self.listing(f"{label} start={st['start']}", start=st["start"], where=where)
             if total is None:
@@ -110,7 +110,14 @@ class Runner:
                 if fails >= 3:
                     break
                 continue
-            fails = 0
+            # محرك البحث أحياناً يرجع إجمالياً أصغر بكثير لطلب واحد: نعيد الطلب مرتين قبل قبوله
+            odd = st["total"] and (total < 0.9 * st["total"] or (not products and st["start"] < total))
+            if odd and suspicious < 2:
+                suspicious += 1
+                self.error(label, f"استجابة غير متسقة عند {st['start']}: الإجمالي {total} بدل {st['total']}")
+                time.sleep(5)
+                continue
+            fails = suspicious = 0
             fresh = [p for p in products if p.sku not in seen]
             seen.update(p.sku for p in products)
             self.process(fresh)
