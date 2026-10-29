@@ -99,10 +99,31 @@ $("theme").addEventListener("click", () => {
 setTheme(getTheme());
 
 // ---------- البيانات ----------
-async function getJSON(path) {
-  const r = await fetch(path, { cache: "no-cache" });
-  if (!r.ok) throw new Error(path + " " + r.status);
-  return r.json();
+// البيانات تتحدث كل نصف ساعة في فرع live على GitHub (الموقع نفسه يُبنى كل ساعتين)؛
+// نأخذ الأحدث بينه وبين نسخة الموقع، فإن تعذّر live بقي الموقع على نسخته
+const LIVE = "https://raw.githubusercontent.com/Kaido1070/Sayd/live/";
+let DATA = "/data/";
+async function getJSON(path, ms) {
+  const ctl = ms ? new AbortController() : null;
+  const t = ctl && setTimeout(() => ctl.abort(), ms);
+  try {
+    const r = await fetch(path, { cache: "no-cache", signal: ctl?.signal });
+    if (!r.ok) throw new Error(path + " " + r.status);
+    return await r.json();
+  } finally { clearTimeout(t); }
+}
+async function getDeals() {
+  const [live, own] = await Promise.allSettled([getJSON(LIVE + "deals.json", 6000), getJSON("/data/deals.json")]);
+  const ok = (x) => x.status === "fulfilled" && x.value?.updated;
+  if (ok(live) && (!ok(own) || live.value.updated > own.value.updated)) { DATA = LIVE; return live.value; }
+  if (own.status === "rejected") throw own.reason;
+  DATA = "/data/";
+  return own.value;
+}
+// المصدر يُحدَّد مرة واحدة، وكل الملفات (البحث وصفحات المنتجات) تنتظره حتى تأتي من نفس النسخة
+let picking = null;
+function pickSource() {
+  return picking ||= getDeals().catch((e) => { picking = null; throw e; });
 }
 
 function buildGroups() {
@@ -118,8 +139,10 @@ function buildGroups() {
 
 async function load() {
   renderSkeleton($("grid"));
+  picking = null;
   try {
-    const [d, o] = await Promise.all([getJSON("/data/deals.json"), getJSON("/data/offers.json")]);
+    const d = await pickSource();
+    const o = await getJSON(DATA + "offers.json").catch(() => getJSON("/data/offers.json"));
     deals = d.deals || []; cats = d.cats || []; updated = d.updated; total = d.products || 0; offers = o.offers || [];
     preorders = d.preorder || [];
     dealById = new Map(deals.map((x) => [x.id, x]));
@@ -154,7 +177,7 @@ setInterval(showUpdated, 60000);
 // فهرس كل المنتجات المرصودة: يُحمّل عند أول استخدام للبحث فقط
 function loadIndex() {
   if (!indexing) {
-    indexing = getJSON("/data/index.json").then((d) => {
+    indexing = pickSource().catch(() => null).then(() => getJSON(DATA + "index.json")).then((d) => {
       index = d.items.map(([id, n, m, p, st, b]) => ({ id, n, m, p, st, b, nk: norm(n), key: norm(`${n} ${m} ${b || ""} ${id}`), mk: compact(m) }));
       return index;
     }).catch(() => { indexing = null; return null; });
@@ -164,7 +187,7 @@ function loadIndex() {
 function shard(id) {
   const k = id.slice(-3).toLowerCase();
   // ملف غير موجود = لا منتج مرصود بهذه الخانات
-  if (!shards[k]) shards[k] = getJSON(`/data/p/${encodeURIComponent(k)}.json`).catch((e) => { delete shards[k]; if (/ 404$/.test(e.message)) return {}; throw e; });
+  if (!shards[k]) shards[k] = pickSource().catch(() => null).then(() => getJSON(`${DATA}p/${encodeURIComponent(k)}.json`)).catch((e) => { delete shards[k]; if (/ 404$/.test(e.message)) return {}; throw e; });
   return shards[k];
 }
 

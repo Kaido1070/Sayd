@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-24.04          # جهاز Linux قياسي (مجاني في المستودعات العامة)
     timeout-minutes: 90            # البوت يتوقف بهدوء عند 75 دقيقة (انظر --max-minutes) ويكمل لاحقاً
     permissions:
-      contents: write              # فقط لدفع فرعي db و data
+      contents: write              # فقط لدفع فروع db و data و live
     env:
       MODE: ${{ inputs.mode || 'auto' }}
     steps:
@@ -109,6 +109,18 @@ jobs:
           mkdir -p out/db && cp data/sayd.db out/db/
           cp data/coverage.json out/db/ 2>/dev/null || true   # تقرير التغطية الداخلي
           publish db out/db
+          # بيانات الموقع كل تشغيل في فرع live (لا يبنيه Cloudflare). جلب النسخة السابقة أولاً
+          # حتى لا يُرفع إلا ما تغيّر؛ والدفع بلا سجل (commit واحد) حتى لا يكبر الفرع
+          if [ -f data/.live ]; then
+            mkdir -p out/live && cp -r data/site/data/. out/live/
+            (cd out/live && git init -q -b live \
+              && { git fetch -q --depth 1 "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" live || true; } \
+              && git add -A \
+              && git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+                 commit -q -m "live $(date -u +%Y-%m-%dT%H:%MZ)" \
+              && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:live) \
+              || echo "::warning::تعذّر تحديث فرع live (الموقع يبقى على آخر نسخة منشورة)"
+          fi
           if [ -f data/.publish_site ]; then
             mkdir -p out/site && cp -r data/site out/site/
             publish data out/site

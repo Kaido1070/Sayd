@@ -238,7 +238,7 @@ class Alerts(unittest.TestCase):
 
 
 class StrongDeals(unittest.TestCase):
-    """تيليجرام: خصم ≥ 50% وسعر > 100 ومتوفر، والجديد فقط، بعد التأكد من صفحة المنتج."""
+    """تيليجرام: خصم ≥ 50% وسعر أساسي > 100 ومتوفر، والجديد فقط، بعد التأكد من صفحة المنتج."""
     def setUp(self):
         self.db = DB(":memory:")
         self.pages = {}
@@ -265,11 +265,20 @@ class StrongDeals(unittest.TestCase):
     def test_new_strong_deal_sent_once(self):
         self.r.strong_scan()                     # أول تشغيل: لا شيء موجود
         self.add("A", 400, 1000)                 # 60% و 400 ريال
-        self.add("CHEAP", 60, 200)               # 70% لكن أقل من 100 ريال
+        self.add("CHEAP", 25, 90)                # 72% لكن السعر الأساسي أقل من 100 ريال
+        self.add("WAS", 80, 180)                 # 55%: بعد الخصم 80 لكن الأساسي 180 → يدخل
         self.add("SMALL", 700, 1000)             # 30% فقط
         self.add("GONE", 400, 1000, stock=False) # نافد
         self.r.strong_scan(); self.r.strong_scan()
-        self.assertEqual(self.sent(), ["A"])
+        self.assertEqual(self.sent(), ["A", "WAS"])
+
+    def test_rule_change_records_silently(self):
+        self.add("OLD", 400, 1000)
+        self.r.strong_scan()
+        self.db.set("strong_rule", "50/100/after")  # شرط سابق
+        self.add("WAS", 80, 180)                    # يطابق الشرط الجديد فقط
+        self.r.strong_scan()
+        self.assertEqual(self.sent(), [])
 
     def test_page_must_confirm(self):
         self.r.strong_scan()

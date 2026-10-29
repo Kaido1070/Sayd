@@ -99,23 +99,24 @@ class Runner:
         self.db.commit()
 
     def strong_scan(self):
-        """خصومات قوية جديدة لتيليجرام: خصم ≥ 50% (خصم إكسترا المعلن أو النزول المرصود) وسعر > 100 ومتوفر.
-        «جديد» = لم يُسجَّل من قبل، أو نزل سعره 5% عن آخر ما سُجّل. أول تشغيل يسجّل الموجود دون إرسال.
+        """خصومات قوية جديدة لتيليجرام: خصم ≥ 50% (خصم إكسترا المعلن أو النزول المرصود) والسعر الأساسي (قبل الخصم) > 100 ومتوفر.
+        «جديد» = لم يُسجَّل من قبل، أو نزل سعره 5% عن آخر ما سُجّل. أول تشغيل (أو بعد تغيير الشرط) يسجّل الموجود دون إرسال.
         يُرسل فقط بعد التأكد من صفحة المنتج (السعر والخصم والتوفر)."""
         a = self.cfg["alerts"]
         pct, floor = a["strong_min_pct"], a["strong_min_price"]
         ts = now()
         rows = {r["sku"]: r for r in self.db.conn.execute(
-            "SELECT * FROM products WHERE delisted=0 AND in_stock=1 AND price>? AND was_price>price "
+            "SELECT * FROM products WHERE delisted=0 AND in_stock=1 AND was_price>? AND was_price>price "
             "AND (was_price-price)/was_price*100>=?", (floor, pct))}
         seen_drop = {}
         for d in deals.active(self.db):  # نزول رصدناه نحن ولو بلا سعر مشطوب
             r = d["row"]
-            if r["in_stock"] and d["price"] > floor and d["pct"] >= pct:
+            if r["in_stock"] and d["basis"] > floor and d["pct"] >= pct:
                 rows.setdefault(r["sku"], r)
                 seen_drop[r["sku"]] = d["basis"]
         seen = self.db.get("strong_seen")
-        first = seen is None
+        rule = f"{pct}/{floor}/before"  # تغيّر الشرط = ما صار يطابقه الآن ليس «جديداً»
+        first = seen is None or self.db.get("strong_rule") != rule
         seen = seen or {}
         forget = ts_minus(ts, days=a["strong_forget_days"])
         seen = {k: v for k, v in seen.items() if v["t"] >= forget}
@@ -137,7 +138,7 @@ class Runner:
             self.handle_page(r["sku"], page)
             before = max(x for x in (page.was_price, seen_drop.get(r["sku"]), 0) if x is not None)
             got = (before - page.price) / before * 100 if before > page.price else 0
-            if page.in_stock is False or page.price <= floor or got < pct:
+            if page.in_stock is False or before <= floor or got < pct:
                 continue  # الصفحة لا تؤكده الآن؛ يُعاد فحصه في التشغيل القادم
             payload = {"sku": r["sku"], "name": r["name"], "url": r["url"], "price": page.price, "before": before,
                        "pct": round(got, 1), "seen_drop": seen_drop.get(r["sku"]),
@@ -147,6 +148,7 @@ class Runner:
                 sent += 1
             seen[r["sku"]] = {"p": page.price, "t": ts}
         self.db.set("strong_seen", seen)
+        self.db.set("strong_rule", rule)
         self.db.commit()
         if first:
             log.info("خصومات قوية: سُجّل %d منتج موجود دون إرسال (التنبيه للجديد فقط)", len(seen))
@@ -582,18 +584,21 @@ def main(argv=None):
                   changes=runner.stats["changes"], alerts=runner.stats["alerts"],
                   errors=runner.stats["errors"], status=status, note=runner.last_error[:300])
     db.commit()
-    # يُنشر الموقع كل publish_every_minutes، أو فوراً إذا تغيّر قالبه
+    # البيانات تُبنى كل تشغيل وتُدفع لفرع live (يقرؤه الموقع مباشرة، بلا بناء في Cloudflare)؛
+    # الموقع نفسه يُنشر كل publish_every_minutes، أو فوراً إذا تغيّر قالبه
     site_hash = dashboard.template_hash()
     publish_site = runner.due("last_site_at", sc["publish_every_minutes"] * 60, 10 * 60) or db.get("site_hash") != site_hash
-    if publish_site:
-        try:
-            dashboard.build(db, cfg, data / "site")
+    built = False
+    try:
+        dashboard.build(db, cfg, data / "site")
+        built = True
+        if publish_site:
             db.set("last_site_at", now())
             db.set("site_hash", site_hash)
-            db.commit()
-        except Exception:
-            publish_site = False
-            log.error("فشل توليد اللوحة:\n%s", traceback.format_exc())
+        db.commit()
+    except Exception:
+        publish_site = False
+        log.error("فشل توليد اللوحة:\n%s", traceback.format_exc())
     try:  # تقرير تغطية داخلي (يُحفظ مع قاعدة البيانات، لا يُنشر في الموقع)
         dashboard.write_coverage(db, cfg, data / "coverage.json")
     except Exception:
@@ -604,6 +609,8 @@ def main(argv=None):
         log.error("فحص سلامة قاعدة البيانات فشل — لن تُنشر")
         return 2
     (data / ".changed").write_text(now())
+    if built:
+        (data / ".live").write_text(now())
     if publish_site:
         (data / ".publish_site").write_text(now())
     log.info("انتهى: %s", runner.stats)
