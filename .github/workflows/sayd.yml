@@ -6,10 +6,14 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "auto | full | hot | test (رسالة تجربة للتنبيهات)"
+        description: "auto | full | hot | test (رسالة تجربة للتنبيهات) | restore (استعادة نسخة احتياطية)"
         default: auto
         type: choice
-        options: [auto, full, hot, test]
+        options: [auto, full, hot, test, restore]
+      backup:
+        description: "اسم النسخة للاستعادة فقط، مثل sayd-2026-10-29.db.gz"
+        required: false
+        default: ""
 # لا يوجد pull_request: كود طلبات السحب لا يشغّل هذا الـ workflow ولا يصل للأسرار
 
 # لا صلاحيات افتراضية؛ المهمة تطلب ما تحتاجه فقط
@@ -58,6 +62,13 @@ jobs:
             fi
           done
 
+      - name: Restore backup
+        if: env.MODE == 'restore'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BACKUP: ${{ inputs.backup }}
+        run: python -m sayd.backup restore --name "$BACKUP" --out data/sayd.db && date -u > data/.changed
+
       - name: Run Sayd
         env:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -72,6 +83,7 @@ jobs:
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
         run: |
           case "$MODE" in
+            restore) echo "وضع الاستعادة: لا فحص" ;;
             full) python -m sayd --data data --max-minutes 75 --force-full ;;
             hot)  python -m sayd --data data --max-minutes 75 --force-hot ;;
             test) python -m sayd --test-notify ;;
@@ -95,8 +107,19 @@ jobs:
           }
           if [ ! -f data/.changed ]; then echo "لا تغييرات للنشر"; exit 0; fi
           mkdir -p out/db && cp data/sayd.db out/db/
+          cp data/coverage.json out/db/ 2>/dev/null || true   # تقرير التغطية الداخلي
           publish db out/db
           if [ -f data/.publish_site ]; then
             mkdir -p out/site && cp -r data/site out/site/
             publish data out/site
           fi
+
+      # نسخة احتياطية يومية في GitHub Releases (آخر 14 يوماً + أول كل شهر دائماً)
+      - name: Backup database
+        if: always() && env.MODE != 'test'
+        timeout-minutes: 10
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ ! -f data/.changed ]; then exit 0; fi
+          python -m sayd.backup save --db data/sayd.db

@@ -295,21 +295,23 @@ class Runner:
         self.db.commit()
 
     def enrich_deals(self):
-        """صفحة كل عرض حالي: تأكيد السعر كما يراه المشتري، وخيارات المنتج (لون/سعة) والبائع."""
+        """حالة العروض: مراجعة، ثم فتح صفحات ما ينتظر التأكيد (عرض جديد أو سعر تغيّر لعرض قائم)
+        وصفحات العروض الحالية الناقصة (خيارات/بائع/صورة)، ثم مراجعة ثانية بعد التأكيد."""
         rules = self.cfg["deals"]
-        ts = now()
-        todo = [d for d in deals.find_deals(self.db, rules, ts, confirmed_only=False)
-                if not d["page_ok"] or not d["row"]["image"]]
-        todo.sort(key=lambda d: -d["saving"])
+        deals.update_states(self.db, rules, now())
+        todo = deals.pending(self.db)
+        todo += [d["row"]["sku"] for d in sorted(deals.active(self.db), key=lambda d: -d["saving"])
+                 if (not d["page_ok"] or not d["row"]["image"]) and d["row"]["sku"] not in todo]
         self.phases.append(f"deals:{len(todo)}")
-        for d in todo[:rules["enrich_per_run"]]:
+        for sku in todo[:rules["enrich_per_run"]]:
             if self.left() < 60 or self.blocked >= 3:
                 break
-            row = d["row"]
-            page = self.fetch_page(row["sku"], row["url"])
+            page = self.fetch_page(sku, self.db.product(sku)["url"])
             if page:
-                self.handle_page(row["sku"], page)
+                self.handle_page(sku, page)
                 self.db.commit()
+        deals.update_states(self.db, rules, now())
+        self.db.commit()
 
     def banner_scan(self):
         self.phases.append("banners")
@@ -392,9 +394,12 @@ class Runner:
             self.due("last_full_done_at", sc["full_every_hours"] * 3600, 20 * 60)
         hot_due = self.baseline_done and (self.force_hot or self.due("last_hot_at", sc["hot_every_minutes"] * 60, 10 * 60))
         pending = self.db.pending_alerts(ts_minus(now(), days=3)) if self.notifier.configured else []
-        if not (full_due or hot_due or pending):
+        site_changed = self.db.get("site_hash") != dashboard.template_hash()
+        if not (full_due or hot_due or pending or site_changed):
             log.info("لا يوجد عمل مستحق في هذا التشغيل")
             return False
+        if not (full_due or hot_due or pending):
+            return True  # فقط إعادة نشر الموقع بقالبه الجديد
 
         if full_due or hot_due:
             found = self.ex.discover()
@@ -446,6 +451,7 @@ def main(argv=None):
     data = Path(args.data)
     data.mkdir(parents=True, exist_ok=True)
     db = DB(data / "sayd.db")
+    db.gap_hours = cfg["scan"].get("gap_hours", 12)
     minutes = args.max_minutes or cfg["scan"]["max_run_minutes"]
     deadline = time.time() + minutes * 60
     sc = cfg["scan"]
@@ -495,6 +501,10 @@ def main(argv=None):
         except Exception:
             publish_site = False
             log.error("فشل توليد اللوحة:\n%s", traceback.format_exc())
+    try:  # تقرير تغطية داخلي (يُحفظ مع قاعدة البيانات، لا يُنشر في الموقع)
+        dashboard.write_coverage(db, cfg, data / "coverage.json")
+    except Exception:
+        log.error("فشل تقرير التغطية:\n%s", traceback.format_exc())
     ok = db.integrity_ok()
     db.close()
     if not ok:

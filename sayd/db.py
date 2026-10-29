@@ -1,4 +1,9 @@
-"""SQLite: المنتجات، سجل الأسعار (عند التغيّر فقط)، العروض، التنبيهات."""
+"""SQLite: المنتجات، سجل الأسعار، العروض، التنبيهات.
+سجل الأسعار دائم ولا يُحذف أبداً:
+- price_history: سطر عند كل تغيّر (السعر السابق والجديد ووقت الرصد).
+- price_periods: فترات متصلة بنفس السعر/التوفر، مع أول وآخر رصد ناجح وعدد مرات الرصد؛
+  الرصد المطابق يمدّ الفترة بدل تكرار السطر، والانقطاع الطويل يبدأ فترة جديدة فيظهر كفجوة.
+كل الأوقات بتوقيت UTC بصيغة ISO."""
 import json
 import sqlite3
 from dataclasses import dataclass
@@ -30,7 +35,19 @@ CREATE TABLE IF NOT EXISTS runs(
   products_seen INTEGER, changes INTEGER, alerts INTEGER, errors INTEGER, status TEXT, note TEXT);
 CREATE TABLE IF NOT EXISTS errors(id INTEGER PRIMARY KEY, ts TEXT, context TEXT, message TEXT);
 CREATE TABLE IF NOT EXISTS sitemap(sku TEXT PRIMARY KEY, url TEXT, last_checked TEXT, dead_until TEXT);
+CREATE TABLE IF NOT EXISTS price_periods(
+  id INTEGER PRIMARY KEY, sku TEXT NOT NULL, price REAL NOT NULL, was_price REAL, in_stock INTEGER,
+  first_ts TEXT NOT NULL, last_ts TEXT NOT NULL, checks INTEGER NOT NULL DEFAULT 1, source TEXT);
+CREATE INDEX IF NOT EXISTS ix_periods_sku ON price_periods(sku, first_ts);
+CREATE TABLE IF NOT EXISTS deal_state(
+  sku TEXT PRIMARY KEY, status TEXT NOT NULL, basis REAL, price REAL,
+  started_at TEXT, updated_at TEXT, ended_at TEXT, reason TEXT);
 """
+
+
+def _norm_was(price, was):
+    """السعر المشطوب المعلن يُحفظ فقط إذا كان أعلى من سعر البيع الفعلي."""
+    return was if was and price and was > price + 0.005 else None
 
 
 def now():
@@ -75,7 +92,36 @@ class DB:
                          ("variant_label", "TEXT"), ("seller", "TEXT")):
             if col not in cols:  # ترقية قاعدة بيانات قديمة
                 self.conn.execute(f"ALTER TABLE products ADD COLUMN {col} {typ}")
+        if "prev_price" not in {r[1] for r in self.conn.execute("PRAGMA table_info(price_history)")}:
+            self.conn.execute("ALTER TABLE price_history ADD COLUMN prev_price REAL")
+            # السعر السابق للأسطر القديمة من السطر الذي قبلها لنفس المنتج (التواريخ لا تتغير)
+            self.conn.execute("""UPDATE price_history SET prev_price=(
+                SELECT h2.price FROM price_history h2 WHERE h2.sku=price_history.sku
+                AND (h2.ts<price_history.ts OR (h2.ts=price_history.ts AND h2.id<price_history.id))
+                ORDER BY h2.ts DESC, h2.id DESC LIMIT 1)""")
+        self.gap_hours = 12
+        self._import_periods()
         self.conn.commit()
+
+    def _import_periods(self):
+        """مرة واحدة: كل سطر قديم في price_history يصبح فترة بنفس وقت رصده. الفترات المغلقة القديمة
+        لا نعرف آخر رصد لها فتبقى بطول صفر (source=import)؛ الفترة الأخيرة تمتد حتى آخر رصد للمنتج."""
+        if self.get("periods_imported") or self.conn.execute("SELECT 1 FROM price_periods LIMIT 1").fetchone():
+            return
+        last = {}
+        for r in self.conn.execute("SELECT sku, ts, price, was_price, in_stock FROM price_history "
+                                   "WHERE price IS NOT NULL AND price>0 ORDER BY sku, ts, id"):
+            cur = self.conn.execute(
+                "INSERT INTO price_periods(sku,price,was_price,in_stock,first_ts,last_ts,checks,source) VALUES(?,?,?,?,?,?,1,'import')",
+                (r["sku"], r["price"], _norm_was(r["price"], r["was_price"]), r["in_stock"], r["ts"], r["ts"]))
+            last[r["sku"]] = cur.lastrowid
+        # الفترة الأخيرة لكل منتج: أي تغيّر بعدها كان سيُسجَّل، فهي مستمرة حتى آخر رصد ناجح للمنتج
+        seen = {r[0]: r[1] for r in self.conn.execute("SELECT sku, last_seen FROM products WHERE delisted=0")}
+        for sku, pid in last.items():
+            ls = seen.get(sku)
+            if ls:
+                self.conn.execute("UPDATE price_periods SET last_ts=?, checks=2 WHERE id=? AND first_ts<?", (ls, pid, ls))
+        self.set("periods_imported", now())
 
     # ---------- meta ----------
     def get(self, key, default=None):
@@ -115,13 +161,15 @@ class DB:
                 (p.sku, p.name, p.category, codes, p.url, p.price, p.was_price, int(p.in_stock), int(p.marketplace),
                  badges, p.price, ts if p.price else None, p.price, ts if p.price else None, ts, ts, ts))
             self._details(p)
-            hid = self._history(p.sku, ts, p.price, p.was_price, p.in_stock)
+            hid = self._history(p.sku, ts, p.price, p.was_price, p.in_stock, None)
+            self._period(p.sku, ts, p.price, p.was_price, p.in_stock, source)
             return Change(p.sku, p.name, p.url, p.category, p.category_codes, None, p.price, None, p.in_stock,
                           None, None, hid, is_new=True, was_price=p.was_price)
 
         new_price = p.price if p.price is not None else row["price"]
-        if (source == "api" and row["pdp_at"] and row["pdp_price"] is not None and new_price is not None
-                and row["pdp_at"] >= ts_minus(ts, hours=pdp_trust_hours) and abs(new_price - row["pdp_price"]) >= 0.01):
+        stale_api = (source == "api" and row["pdp_at"] and row["pdp_price"] is not None and new_price is not None
+                     and row["pdp_at"] >= ts_minus(ts, hours=pdp_trust_hours) and abs(new_price - row["pdp_price"]) >= 0.01)
+        if stale_api:
             new_price = row["price"]  # سعر البحث متأخر عن الصفحة
         price_changed = new_price is not None and (row["price"] is None or abs(new_price - row["price"]) >= 0.01)
         stock_changed = bool(row["in_stock"]) != p.in_stock or row["delisted"]
@@ -131,6 +179,8 @@ class DB:
         self._details(p)
         if source == "pdp" and p.price is not None:
             c.execute("UPDATE products SET pdp_price=?, pdp_at=? WHERE sku=?", (p.price, ts, p.sku))
+        if p.price is not None and not stale_api:  # رصد ناجح بسعر صالح فقط يمدّ الفترة أو يبدأ أخرى
+            self._period(p.sku, ts, p.price, p.was_price, p.in_stock, source)
         if not (price_changed or stock_changed):
             return None
 
@@ -142,7 +192,7 @@ class DB:
         if new_price is not None and (row["max_price"] is None or new_price > row["max_price"]):
             upd.update(max_price=new_price, max_price_at=ts)
         c.execute(f"UPDATE products SET {','.join(k + '=?' for k in upd)} WHERE sku=?", (*upd.values(), p.sku))
-        hid = self._history(p.sku, ts, new_price, p.was_price, p.in_stock)
+        hid = self._history(p.sku, ts, new_price, p.was_price, p.in_stock, row["price"])
         return Change(p.sku, p.name, p.url or row["url"], p.category, p.category_codes, row["price"], new_price,
                       False if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid,
                       was_price=p.was_price)
@@ -166,10 +216,44 @@ class DB:
         for code, label in labels.items():
             self.conn.execute("UPDATE products SET variant_group=?, variant_label=? WHERE sku=?", (group, label, code))
 
-    def _history(self, sku, ts, price, was, stock):
-        cur = self.conn.execute("INSERT INTO price_history(sku,ts,price,was_price,in_stock) VALUES(?,?,?,?,?)",
-                                (sku, ts, price, was, int(stock)))
+    def _history(self, sku, ts, price, was, stock, prev):
+        cur = self.conn.execute("INSERT INTO price_history(sku,ts,price,was_price,in_stock,prev_price) VALUES(?,?,?,?,?,?)",
+                                (sku, ts, price, was, int(stock), prev))
         return cur.lastrowid
+
+    def _period(self, sku, ts, price, was, stock, source):
+        """رصد ناجح: يمدّ الفترة الحالية إذا لم يتغير شيء ولم ينقطع الرصد أكثر من gap_hours، وإلا يبدأ فترة جديدة."""
+        if price is None or price <= 0:
+            return
+        was = _norm_was(price, was)
+        cur = self.conn.execute("SELECT id, price, was_price, in_stock, last_ts FROM price_periods WHERE sku=? "
+                                "ORDER BY first_ts DESC, id DESC LIMIT 1", (sku,)).fetchone()
+        if cur and ts < cur["last_ts"]:
+            return  # رصد أقدم من آخر رصد محفوظ
+        same = cur and abs(cur["price"] - price) < 0.005 and (cur["was_price"] or 0) == (was or 0) \
+            and bool(cur["in_stock"]) == bool(stock)
+        if same and (parse_ts(ts) - parse_ts(cur["last_ts"])).total_seconds() <= self.gap_hours * 3600:
+            self.conn.execute("UPDATE price_periods SET last_ts=?, checks=checks+1 WHERE id=?", (ts, cur["id"]))
+        else:
+            self.conn.execute("INSERT INTO price_periods(sku,price,was_price,in_stock,first_ts,last_ts,checks,source) "
+                              "VALUES(?,?,?,?,?,?,1,?)", (sku, price, was, int(bool(stock)), ts, ts, source))
+
+    def periods(self, sku):
+        return self.conn.execute("SELECT price, was_price, in_stock, first_ts, last_ts, checks, source FROM price_periods "
+                                 "WHERE sku=? ORDER BY first_ts, id", (sku,)).fetchall()
+
+    # ---------- حالة العروض ----------
+    def deal(self, sku):
+        return self.conn.execute("SELECT * FROM deal_state WHERE sku=?", (sku,)).fetchone()
+
+    def set_deal(self, sku, **f):
+        if self.deal(sku):
+            self.conn.execute(f"UPDATE deal_state SET {','.join(k + '=?' for k in f)} WHERE sku=?", (*f.values(), sku))
+        else:
+            self.conn.execute(f"INSERT INTO deal_state(sku,{','.join(f)}) VALUES(?,{','.join('?' * len(f))})", (sku, *f.values()))
+
+    def drop_deal(self, sku):
+        self.conn.execute("DELETE FROM deal_state WHERE sku=?", (sku,))
 
     def delist_unseen(self, since, ts):
         """بعد اكتمال مسح كامل: المنتجات التي لم تظهر (ولا صفحة حية لها في خريطة الموقع) تُعتبر غير متوفرة."""
@@ -178,7 +262,7 @@ class DB:
             "AND sku NOT IN (SELECT sku FROM sitemap WHERE dead_until IS NULL OR dead_until<?)", (since, ts)).fetchall()
         for r in rows:
             self.conn.execute("UPDATE products SET delisted=1, in_stock=0, last_changed=? WHERE sku=?", (ts, r["sku"]))
-            self._history(r["sku"], ts, r["price"], r["was_price"], False)
+            self._history(r["sku"], ts, r["price"], r["was_price"], False, r["price"])  # استنتاج، ليس رصداً: لا فترة
         return len(rows)
 
     # ---------- خريطة الموقع ----------

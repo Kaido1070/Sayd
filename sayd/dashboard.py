@@ -9,7 +9,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 from . import deals as deals_mod
-from .db import now
+from .db import now, ts_minus
 
 ROOT = Path(__file__).resolve().parent.parent
 WEB = ROOT / "web"
@@ -38,11 +38,91 @@ def _deal(d):
     return {
         "id": row["sku"], "n": row["name"], "m": row["model"] or "", "sp": specs[:2],
         "c": (row["dept"] or "").strip() or "أخرى", "img": row["image"] or "", "u": row["url"],
-        "p": _r(d["price"]), "o": _r(d["prev"]), "sv": _r(d["saving"]), "pc": round(d["pct"], 1),
+        "p": _r(d["price"]), "o": _r(d["basis"]), "sv": _r(d["saving"]), "pc": round(d["pct"], 1),
         "st": 1 if row["in_stock"] else 0, "t": d["since"], "mp": 1 if row["marketplace"] else 0,
         "sl": row["seller"] or "", "lw": 1 if d["lowest"] else 0, "fs": d["first_seen"],
         "g": row["variant_group"] or "", "gl": row["variant_label"] or "",
     }
+
+
+def shard(sku):
+    """ملف بيانات المنتج: آخر 3 خانات من رمزه (≈1000 ملف صغير، كل صفحة منتج تحمّل ملفها فقط)."""
+    return sku[-3:].lower()
+
+
+def product_records(db, active_deals):
+    """سجل كل منتج: البيانات، العرض الحالي إن وجد، وفترات السعر المرصودة كاملة."""
+    deal_by = {d["row"]["sku"]: d for d in active_deals}
+    ended = {r[0] for r in db.conn.execute("SELECT sku FROM deal_state WHERE status='ended'")}
+    groups = defaultdict(list)
+    for sku, g, label in db.conn.execute("SELECT sku, variant_group, variant_label FROM products WHERE variant_group IS NOT NULL"):
+        groups[g].append([sku, label or ""])
+    periods = defaultdict(list)
+    for r in db.conn.execute("SELECT sku, price, was_price, in_stock, first_ts, last_ts, checks, source "
+                             "FROM price_periods ORDER BY sku, first_ts, id"):
+        # [أول رصد، آخر رصد، السعر، المتوفر، عدد مرات الرصد، السعر المشطوب المعلن]
+        periods[r["sku"]].append([r["first_ts"][:16], r["last_ts"][:16], _r(r["price"]), r["in_stock"], r["checks"], _r(r["was_price"])])
+    out = defaultdict(dict)
+    for row in db.conn.execute("SELECT * FROM products"):
+        sku = row["sku"]
+        d = deal_by.get(sku)
+        rec = {
+            "n": row["name"], "m": row["model"] or "", "sp": json.loads(row["specs"] or "[]")[:3],
+            "c": (row["dept"] or "").strip(), "img": row["image"] or "", "u": row["url"],
+            "sl": row["seller"] or "", "mp": 1 if row["marketplace"] else 0,
+            "p": _r(row["price"]), "st": 0 if row["delisted"] else (1 if row["in_stock"] else 0), "dl": row["delisted"] or 0,
+            "fs": row["first_seen"], "ls": row["last_seen"], "pr": periods.get(sku, []),
+        }
+        if row["variant_group"] and len(groups[row["variant_group"]]) > 1:
+            rec["gl"] = row["variant_label"] or ""
+            rec["vo"] = [v for v in groups[row["variant_group"]] if v[0] != sku]
+        if d:
+            rec["deal"] = {"b": _r(d["basis"]), "p": _r(d["price"]), "sv": _r(d["saving"]), "pc": round(d["pct"], 1), "t": d["since"]}
+        elif sku in ended:
+            rec["ex"] = 1
+        out[shard(sku)][sku] = rec
+    return out
+
+
+def write_coverage(db, cfg, path):
+    """تقرير داخلي لاكتمال الفهرسة وما تعذّر تحديثه (لا يُنشر في الموقع)."""
+    ts = now()
+    q = lambda sql, *a: db.conn.execute(sql, a).fetchone()[0]
+    stale_since = ts_minus(ts, hours=cfg["scan"]["full_every_hours"] * 2 + 2)
+    full_runs = db.conn.execute("SELECT started_at, finished_at, products_seen, note FROM runs "
+                                "WHERE phases LIKE '%full%' ORDER BY id DESC LIMIT 1").fetchone()
+    stale_by_dept = {r[0] or "غير معروف": r[1] for r in db.conn.execute(
+        "SELECT dept, COUNT(*) FROM products WHERE delisted=0 AND last_seen<? GROUP BY dept ORDER BY 2 DESC", (stale_since,))}
+    report = {
+        "generated_at": ts,
+        "history_started_at": q("SELECT MIN(first_ts) FROM price_periods"),
+        "products_known": q("SELECT COUNT(*) FROM products"),
+        "products_active": q("SELECT COUNT(*) FROM products WHERE delisted=0"),
+        "products_delisted": q("SELECT COUNT(*) FROM products WHERE delisted=1"),
+        "seen_last_24h": q("SELECT COUNT(*) FROM products WHERE last_seen>=?", ts_minus(ts, hours=24)),
+        "stale_not_seen_since": stale_since,
+        "stale_count": sum(stale_by_dept.values()),
+        "stale_by_dept": stale_by_dept,
+        "stale_sample": [r[0] for r in db.conn.execute(
+            "SELECT sku FROM products WHERE delisted=0 AND last_seen<? ORDER BY last_seen LIMIT 50", (stale_since,))],
+        "last_full_scan": dict(full_runs) if full_runs else None,
+        "full_scan_in_progress": db.get("full_scan"),
+        "search_api_total_last_seen": (db.get("full_scan") or {}).get("total"),
+        "sitemap": {
+            "urls": q("SELECT COUNT(*) FROM sitemap"),
+            "checked": q("SELECT COUNT(*) FROM sitemap WHERE last_checked IS NOT NULL"),
+            "dead_or_blocked": q("SELECT COUNT(*) FROM sitemap WHERE dead_until IS NOT NULL"),
+            "not_in_db_unchecked": q("SELECT COUNT(*) FROM sitemap s LEFT JOIN products p ON p.sku=s.sku "
+                                     "WHERE p.sku IS NULL AND s.last_checked IS NULL"),
+        },
+        "price_periods": q("SELECT COUNT(*) FROM price_periods"),
+        "price_changes": q("SELECT COUNT(*) FROM price_history WHERE prev_price IS NOT NULL AND ABS(price-prev_price)>=0.005"),
+        "deals": {s: n for s, n in db.conn.execute("SELECT status, COUNT(*) FROM deal_state GROUP BY status")},
+        "errors_24h": {r[0]: r[1] for r in db.conn.execute(
+            "SELECT substr(context,1,20), COUNT(*) FROM errors WHERE ts>=? GROUP BY 1 ORDER BY 2 DESC LIMIT 20", (ts_minus(ts, hours=24),))},
+    }
+    Path(path).write_text(json.dumps(report, ensure_ascii=False, indent=1), encoding="utf-8")
+    return report
 
 
 def _clean_offer_text(text):
@@ -96,27 +176,28 @@ def build(db, cfg, out):
     tmp = out.with_name(out.name + ".tmp")
     shutil.rmtree(tmp, ignore_errors=True)
     shutil.copytree(WEB, tmp)
-    (tmp / "data" / "h").mkdir(parents=True)
+    (tmp / "data" / "p").mkdir(parents=True)
 
-    found = deals_mod.find_deals(db, cfg["deals"], ts)
-    items = [_deal(d) for d in found]
+    current = deals_mod.active(db)
+    items = [_deal(d) for d in current]
     cats = Counter(i["c"] for i in items)
     _dump(tmp / "data" / "deals.json", {
         "updated": ts,
         "cats": [c for c, _ in cats.most_common()],
         "deals": sorted(items, key=lambda i: i["t"], reverse=True),
+        "ended": deals_mod.ended(db),
     })
     _dump(tmp / "data" / "offers.json", {"updated": ts, "offers": offers_payload(db, ts)})
     # ملف فارغ مكان ملف قديم كان يحتوي سجل التشغيل؛ يستبدل النسخة المخزنة في ذاكرة Cloudflare
     _dump(tmp / "data" / "summary.json", {})
 
-    # سجل الأسعار الحقيقي لمنتجات العروض فقط
-    shards = defaultdict(dict)
-    for i in items:
-        rows = db.conn.execute("SELECT ts, price, in_stock FROM price_history WHERE sku=? ORDER BY ts, id", (i["id"],)).fetchall()
-        shards[i["id"][-2:]][i["id"]] = [[t[:16], _r(p), s] for t, p, s in rows if p and p > 0]
-    for k, v in shards.items():
-        _dump(tmp / "data" / "h" / f"{k}.json", v)
+    # فهرس البحث لكل المنتجات (يُحمّل عند أول بحث فقط): [الرمز، الاسم، الموديل، السعر، الحالة]
+    _dump(tmp / "data" / "index.json", {"updated": ts, "items": [
+        [r["sku"], r["name"], r["model"] or "", _r(r["price"]), -1 if r["delisted"] else (1 if r["in_stock"] else 0)]
+        for r in db.conn.execute("SELECT sku, name, model, price, in_stock, delisted FROM products ORDER BY sku")]})
+    # صفحة كل منتج: ملف صغير مشترك بين ~33 منتجاً يُحمّل عند فتح الصفحة فقط
+    for key, recs in product_records(db, current).items():
+        _dump(tmp / "data" / "p" / f"{key}.json", recs)
 
     shutil.rmtree(out, ignore_errors=True)
     tmp.rename(out)

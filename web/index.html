@@ -7,12 +7,12 @@
 <meta name="description" content="تخفيضات إكسترا الحالية: السعر، التوفير، ورابط الشراء.">
 <title>صيد | تخفيضات إكسترا</title>
 <link rel="preconnect" href="https://media.extra.com">
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <header>
   <div class="wrap top">
-    <a class="brand" href="./" aria-label="صيد، الصفحة الرئيسية">
+    <a class="brand" href="/" data-link aria-label="صيد، الصفحة الرئيسية">
       <span class="mark"><svg width="27" height="27" viewBox="0 0 32 32" fill="none" aria-hidden="true"><path d="M8 7h16v19H8z" stroke="currentColor" stroke-width="1.8"/><path d="M12 10V7a4 4 0 0 1 8 0v3M12 18l3 3 6-7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg></span>
       <strong>صيد<span>Sayd</span></strong>
     </a>
@@ -24,13 +24,18 @@
   <h1 class="sr-only">تخفيضات إكسترا</h1>
   <div class="searchbar">
     <svg class="icon" viewBox="0 0 24 24" fill="none" stroke="#6b8075" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
-    <input id="search" type="search" placeholder="وش المنتج اللي تدور عليه؟" aria-label="ابحث" autocomplete="off" enterkeyhint="search">
+    <input id="search" type="search" placeholder="اسم المنتج أو الموديل أو رابطه" aria-label="ابحث" autocomplete="off" enterkeyhint="search">
   </div>
+  <div id="search-results" class="search-results" hidden></div>
 
+  <section id="product-view" hidden aria-live="polite"></section>
+
+  <div id="home">
   <div class="navrow">
     <div class="tabs" role="tablist" aria-label="الأقسام">
       <button id="products-tab" class="tab" role="tab" aria-selected="true" aria-controls="products-panel" data-tab="products">التخفيضات <span class="count" id="deal-count"></span></button>
       <button id="coupons-tab" class="tab" role="tab" aria-selected="false" aria-controls="coupons-panel" tabindex="-1" data-tab="coupons">العروض والكوبونات <span class="count" id="offer-count"></span></button>
+      <button id="ended-tab" class="tab" role="tab" aria-selected="false" aria-controls="ended-panel" tabindex="-1" data-tab="ended">خرجت من العروض</button>
     </div>
   </div>
 
@@ -66,6 +71,13 @@
     <div class="coupon-grid" id="coupons"></div>
     <div class="gap"></div>
   </section>
+
+  <section id="ended-panel" role="tabpanel" aria-labelledby="ended-tab" hidden>
+    <div class="tools"><div><div class="results-title">خرجت من العروض</div><span class="result-note" id="ended-note"></span></div></div>
+    <ul class="ended-list" id="ended"></ul>
+    <div class="more-zone" id="ended-more-zone" hidden><button class="more" id="ended-more" type="button">عرض المزيد</button></div>
+  </section>
+  </div>
 </main>
 
 <footer><div class="wrap footer-inner"><strong>صيد</strong><span>الأسعار من إكسترا وقت آخر تحديث، وقد تتغير في المتجر.</span></div></footer>
@@ -86,12 +98,9 @@
   </form>
 </dialog>
 
-<dialog class="detail-dialog" id="detail" aria-labelledby="detail-title">
-  <div class="modal-head"><h2 id="detail-title">تفاصيل المنتج</h2><button class="close" type="button" data-close="detail" aria-label="إغلاق">×</button></div>
-  <div class="detail-body" id="detail-content"></div>
-</dialog>
+
 
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
-<script src="app.js" defer></script>
+<script src="/app.js" defer></script>
 </body>
 </html>
