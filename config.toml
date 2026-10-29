@@ -2,7 +2,6 @@
 
 [site]
 dashboard_url = "https://sayd.pages.dev"
-city = "SA-riyadh"            # مدينة حساب التوفر
 include_marketplace = true    # منتجات البائعين الخارجيين
 user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0 Safari/537.36"
 

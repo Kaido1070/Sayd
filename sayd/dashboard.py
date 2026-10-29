@@ -111,8 +111,7 @@ def build(db, cfg, out):
         "offers": offers,
         "watch": watch,
         "runs": runs,
-        "settings": {"min_drop_pct": cfg["alerts"]["min_drop_pct"], "window_days": cfg["alerts"]["low_window_days"],
-                     "city": cfg["site"]["city"]},
+        "settings": {"min_drop_pct": cfg["alerts"]["min_drop_pct"], "window_days": cfg["alerts"]["low_window_days"]},
     }
     _dump(tmp / "data" / "summary.json", summary)
 

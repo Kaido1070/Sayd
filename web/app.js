@@ -142,7 +142,7 @@ function renderRuns() {
   $("#runs").innerHTML = `
     <div class="stats">
       <div class="stat"><b>${fmt(s.products)}</b><span>منتج مسجل</span></div>
-      <div class="stat"><b>${fmt(s.in_stock)}</b><span>متوفر (${esc(s.settings.city)})</span></div>
+      <div class="stat"><b>${fmt(s.in_stock)}</b><span>متوفر للتوصيل</span></div>
       <div class="stat"><b>${s.offers.length}</b><span>عرض نشط</span></div>
       <div class="stat"><b>${s.settings.min_drop_pct}%</b><span>حد التنبيه العام</span></div>
     </div>

@@ -30,7 +30,7 @@ DEFAULT_UNBXD = {
 }
 
 FIELDS = ",".join([
-    "productCode", "nameAr", "price", "wasPrice", "inStock", "inStockFlag", "comingSoon",
+    "productCode", "nameAr", "price", "wasPrice", "hdAvailableCities", "inStockFlag", "comingSoon",
     "isMarketPlaceItem", "urlAr", "allCategoriesAr", "familyId", "categories",
     "productStatusAr", "brandAr",
 ])
@@ -113,9 +113,8 @@ def _json_after(page, marker):
 
 
 class Extra:
-    def __init__(self, http, city, include_marketplace=True, unbxd=None):
+    def __init__(self, http, include_marketplace=True, unbxd=None):
         self.http = http
-        self.city = city
         self.include_marketplace = include_marketplace
         self.unbxd = unbxd or dict(DEFAULT_UNBXD)
 
@@ -159,10 +158,12 @@ class Extra:
             raw = resp["products"]
         except (ValueError, KeyError, TypeError):
             raise SiteChanged("شكل استجابة Unbxd تغيّر") from None
+        # Unbxd يحذف الحقل إذا كانت القائمة فارغة؛ غيابه من الصفحة كلها يعني أن الموقع تغيّر
+        has_hd = any("hdAvailableCities" in p for p in raw)
         products, bad = [], 0
         for p in raw:
             try:
-                prod = self._parse(p)
+                prod = self._parse(p, has_hd)
             except (KeyError, TypeError, ValueError) as e:
                 bad += 1
                 log.warning("فشل تحليل منتج %s: %s", p.get("productCode"), e)
@@ -172,17 +173,15 @@ class Extra:
             products.append(prod)
         return total, products, bad
 
-    def _parse(self, p):
+    def _parse(self, p, has_hd=True):
         sku = str(p["productCode"]).strip()
         name = (p.get("nameAr") or "").strip()
         if not sku or not name:
             raise ValueError("SKU أو الاسم مفقود")
-        stock = None
-        for s in p.get("inStock") or []:
-            if s.startswith(self.city + "_"):
-                stock = not s.endswith("_outOfStock")
-                break
-        if stock is None:
+        # "متوفر" = يمكن توصيله لمدينة واحدة على الأقل (المتوفر للاستلام من المعرض فقط لا يُحسب)
+        if has_hd:
+            stock = bool(p.get("hdAvailableCities"))
+        else:
             stock = str(p.get("inStockFlag")).lower() == "true"
         if str(p.get("comingSoon")).lower() == "true":
             stock = False
