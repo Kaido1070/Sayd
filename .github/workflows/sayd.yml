@@ -10,36 +10,50 @@ on:
         default: auto
         type: choice
         options: [auto, full, hot, test]
+# لا يوجد pull_request: كود طلبات السحب لا يشغّل هذا الـ workflow ولا يصل للأسرار
 
-permissions:
-  contents: write
+# لا صلاحيات افتراضية؛ المهمة تطلب ما تحتاجه فقط
+permissions: {}
 
+# تشغيل واحد في كل مرة. لا يُلغى تشغيل جارٍ (قد يكون يكتب البيانات)؛ الجديد ينتظر،
+# وإذا تراكم أكثر من تشغيل منتظر يبقى أحدثها فقط
 concurrency:
   group: sayd
   cancel-in-progress: false
 
 jobs:
   run:
-    runs-on: ubuntu-latest
-    timeout-minutes: 345
+    runs-on: ubuntu-24.04          # جهاز Linux قياسي (مجاني في المستودعات العامة)
+    timeout-minutes: 90            # البوت يتوقف بهدوء عند 75 دقيقة (انظر --max-minutes) ويكمل لاحقاً
+    permissions:
+      contents: write              # فقط لدفع فرعي db و data
+    env:
+      MODE: ${{ inputs.mode || 'auto' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false   # لا يبقى التوكن في .git/config أثناء تشغيل كود البوت
 
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: pip
+          cache: pip                   # كاش صغير لحزم pip فقط (ليس لبيانات البوت)
+          cache-dependency-path: requirements.txt
 
       - run: pip install -r requirements.txt
 
       # قاعدة البيانات في فرع db واللوحة في فرع data (Cloudflare يبني من data فقط).
       # كل فرع commit واحد يُستبدل كل مرة حتى لا يتضخم الريبو.
       - name: Load database
+        if: env.MODE != 'test'
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
+          repo="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
           mkdir -p data
           for b in db data; do
-            if git ls-remote --exit-code --heads origin "$b" >/dev/null; then
-              git fetch --depth=1 origin "$b"
+            if git ls-remote --exit-code --heads "$repo" "$b" >/dev/null; then
+              git fetch -q --depth=1 "$repo" "$b"
               if git archive FETCH_HEAD sayd.db | tar -x -C data; then echo "loaded from $b"; break; fi
             fi
           done
@@ -56,17 +70,19 @@ jobs:
           SMTP_USER: ${{ secrets.SMTP_USER }}
           SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
-          MODE: ${{ inputs.mode || 'auto' }}
         run: |
           case "$MODE" in
-            full) python -m sayd --data data --force-full ;;
-            hot)  python -m sayd --data data --force-hot ;;
+            full) python -m sayd --data data --max-minutes 75 --force-full ;;
+            hot)  python -m sayd --data data --max-minutes 75 --force-hot ;;
             test) python -m sayd --test-notify ;;
-            *)    python -m sayd --data data ;;
+            *)    python -m sayd --data data --max-minutes 75 ;;
           esac
 
+      # يُنشر فقط إذا أنهى البوت عمله وتحقق من سلامة قاعدة البيانات (ملف .changed)؛
+      # أي تشغيل انقطع في المنتصف لا يرفع نسخة ناقصة
       - name: Publish database and dashboard
-        if: always()
+        if: always() && env.MODE != 'test'
+        timeout-minutes: 10
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
