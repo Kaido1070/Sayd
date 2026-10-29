@@ -19,7 +19,7 @@ sitemap_mp_batch = 60         # صفحات بائعين خارجيين قديم�
 banner_pages = ["/ar-sa/", "/ar-sa/promotions"]
 
 [alerts]
-min_drop_pct = 5.0            # نزول عام
+min_drop_pct = 10.0           # نزول عام
 low_window_days = 30          # أقل سعر خلال هذه المدة
 low_min_drop_pct = 1.0        # أقل نزول يُعتبر لشرط "أقل سعر خلال 30 يوم" (يمنع الإزعاج من فروق هللات)
 max_individual = 60           # عدد الرسائل المنفصلة في التشغيل الواحد؛ الباقي يُجمع في رسالة ملخص
