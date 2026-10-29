@@ -4,7 +4,9 @@ from datetime import datetime, timedelta, timezone
 
 from sayd import alerts, categories, config, dashboard, deals
 from sayd.db import DB, Change
-from sayd.extra import Product
+from sayd.extra import Product, ProductPage
+from sayd.__main__ import Runner
+import time
 
 RULES = config.load()["deals"]
 T0 = datetime(2026, 10, 1, tzinfo=timezone.utc)
@@ -233,6 +235,54 @@ class Alerts(unittest.TestCase):
         self.assertIn("كان 1,000", alerts.fmt_restock(r))
         self.assertIsNone(alerts.restock_alert(ch, set(), self.CFG, basis=820))   # نزول 2.4% فقط
         self.assertIsNone(alerts.restock_alert(ch, set(), self.CFG, basis=None))
+
+
+class StrongDeals(unittest.TestCase):
+    """تيليجرام: خصم ≥ 50% وسعر > 100 ومتوفر، والجديد فقط، بعد التأكد من صفحة المنتج."""
+    def setUp(self):
+        self.db = DB(":memory:")
+        self.pages = {}
+        test = self
+
+        class Ex:
+            def product_page(self, url):
+                return test.pages[url.rsplit("/", 1)[1]]
+        self.r = Runner(config.load(), self.db, Ex(), None, time.time() + 600)
+
+    def add(self, sku, price, was, stock=True, page=None):
+        p = Product(sku, "منتج " + sku, "قسم", ["1"], "https://www.extra.com/ar-sa/x/p/" + sku, price, was, stock, False, [])
+        self.db.observe(p, at(0), 30)
+        self.pages[sku] = page or ProductPage(sku, price, was, stock, [])
+
+    def sent(self):
+        return sorted(r["key"] for r in self.db.conn.execute("SELECT key FROM alerts WHERE kind='strong'"))
+
+    def test_existing_ones_are_recorded_not_sent(self):
+        self.add("OLD", 400, 1000)
+        self.r.strong_scan()
+        self.assertEqual(self.sent(), [])
+
+    def test_new_strong_deal_sent_once(self):
+        self.r.strong_scan()                     # أول تشغيل: لا شيء موجود
+        self.add("A", 400, 1000)                 # 60% و 400 ريال
+        self.add("CHEAP", 60, 200)               # 70% لكن أقل من 100 ريال
+        self.add("SMALL", 700, 1000)             # 30% فقط
+        self.add("GONE", 400, 1000, stock=False) # نافد
+        self.r.strong_scan(); self.r.strong_scan()
+        self.assertEqual(self.sent(), ["A"])
+
+    def test_page_must_confirm(self):
+        self.r.strong_scan()
+        self.add("LAG", 400, 1000, page=ProductPage("LAG", 950, 1000, True, []))  # الفهرس متأخر عن الصفحة
+        self.r.strong_scan()
+        self.assertEqual(self.sent(), [])
+
+    def test_deeper_price_is_new_again(self):
+        self.r.strong_scan()
+        self.add("A", 400, 1000); self.r.strong_scan()
+        self.add("A", 390, 1000); self.r.strong_scan()      # أقل من 5%: نفس الخصم
+        self.add("A", 300, 1000); self.r.strong_scan()      # نزل أكثر
+        self.assertEqual(len(self.sent()), 2)
 
 
 if __name__ == "__main__":

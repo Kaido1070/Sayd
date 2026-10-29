@@ -98,6 +98,59 @@ class Runner:
                 self.stats["alerts"] += 1
         self.db.commit()
 
+    def strong_scan(self):
+        """خصومات قوية جديدة لتيليجرام: خصم ≥ 50% (خصم إكسترا المعلن أو النزول المرصود) وسعر > 100 ومتوفر.
+        «جديد» = لم يُسجَّل من قبل، أو نزل سعره 5% عن آخر ما سُجّل. أول تشغيل يسجّل الموجود دون إرسال.
+        يُرسل فقط بعد التأكد من صفحة المنتج (السعر والخصم والتوفر)."""
+        a = self.cfg["alerts"]
+        pct, floor = a["strong_min_pct"], a["strong_min_price"]
+        ts = now()
+        rows = {r["sku"]: r for r in self.db.conn.execute(
+            "SELECT * FROM products WHERE delisted=0 AND in_stock=1 AND price>? AND was_price>price "
+            "AND (was_price-price)/was_price*100>=?", (floor, pct))}
+        seen_drop = {}
+        for d in deals.active(self.db):  # نزول رصدناه نحن ولو بلا سعر مشطوب
+            r = d["row"]
+            if r["in_stock"] and d["price"] > floor and d["pct"] >= pct:
+                rows.setdefault(r["sku"], r)
+                seen_drop[r["sku"]] = d["basis"]
+        seen = self.db.get("strong_seen")
+        first = seen is None
+        seen = seen or {}
+        forget = ts_minus(ts, days=a["strong_forget_days"])
+        seen = {k: v for k, v in seen.items() if v["t"] >= forget}
+        new = []
+        for sku, r in rows.items():
+            old = seen.get(sku)
+            if first or (old and r["price"] > old["p"] * 0.95):
+                seen[sku] = {"p": min(r["price"], old["p"]) if old else r["price"], "t": ts}  # معروف: لا يُرسل
+            else:
+                new.append(r)
+        self.phases.append(f"strong:{len(rows)}/{len(new)}")
+        sent = 0
+        for r in sorted(new, key=lambda r: -(r["was_price"] or 0) + r["price"])[:a["strong_verify_max"]]:
+            if self.left() < 60 or self.blocked >= 3:
+                break
+            page = self.fetch_page(r["sku"], r["url"])
+            if not page or page.price is None:
+                continue
+            self.handle_page(r["sku"], page)
+            before = max(x for x in (page.was_price, seen_drop.get(r["sku"]), 0) if x is not None)
+            got = (before - page.price) / before * 100 if before > page.price else 0
+            if page.in_stock is False or page.price <= floor or got < pct:
+                continue  # الصفحة لا تؤكده الآن؛ يُعاد فحصه في التشغيل القادم
+            payload = {"sku": r["sku"], "name": r["name"], "url": r["url"], "price": page.price, "before": before,
+                       "pct": round(got, 1), "seen_drop": seen_drop.get(r["sku"]),
+                       "history": (self.cfg["site"].get("dashboard_url") or "").rstrip("/") + "/p/" + r["sku"]}
+            if self.db.queue_alert("strong", r["sku"], page.price, payload, ts):
+                self.stats["alerts"] += 1
+                sent += 1
+            seen[r["sku"]] = {"p": page.price, "t": ts}
+        self.db.set("strong_seen", seen)
+        self.db.commit()
+        if first:
+            log.info("خصومات قوية: سُجّل %d منتج موجود دون إرسال (التنبيه للجديد فقط)", len(seen))
+
     def basis_before(self, sku):
         """السعر المرصود قبل آخر نزول (نفس أساس العروض في الموقع)، أو None إن لم يوجد نزول."""
         ref = deals.reference(deals.price_runs(self.db.periods(sku)), self.cfg["deals"])
@@ -454,6 +507,7 @@ class Runner:
             self.banner_scan()
             self.verify_prices()
             self.enrich_deals()
+            self.strong_scan()
         self.badge_offers()
         ts = now()
         self.db.expire_offers(ts, ts_minus(ts, days=4))

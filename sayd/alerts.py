@@ -146,12 +146,29 @@ def fmt_restock(r, short=False):
     return s if short else s + f"\n{_e(r['url'])}"
 
 
+def fmt_strong(p, short=False):
+    """خصم قوي جديد: السعر، السعر قبل الخصم، والتوفير، ورابطا إكسترا وسجل السعر."""
+    head = f"🔥 <b>خصم {p['pct']:.0f}٪</b> — {_e(p['name'] if not short else p['name'][:70])}"
+    price = f"{money(p['price'])} ريال بدل {money(p['before'])} · توفّر {money(p['before'] - p['price'])} ريال"
+    if short:
+        return f"{head}\n   {price}\n   {_e(p['url'])}"
+    lines = [head, price]
+    if p.get("seen_drop"):
+        lines.append(f"نزل من {money(p['seen_drop'])} ريال كما رصدناه")
+    lines += [f"<a href=\"{_e(p['url'])}\">افتح في إكسترا</a>"]
+    if p.get("history"):
+        lines.append(f"<a href=\"{_e(p['history'])}\">سجل السعر</a>")
+    return "\n".join(lines)
+
+
 def fmt_system(s, short=False):
     return f"⚠️ <b>Sayd: مشكلة في الجمع</b>\n{_e(s['message'])}"
 
 
 def subject(kind, p):
     """عنوان مختصر للإيميل وإشعار ntfy."""
+    if kind == "strong":
+        return f"Sayd 🔥 خصم {p['pct']:.0f}% — {p['name'][:60]}"
     if kind == "price":
         return f"Sayd {'🔥' if p.get('strong') else '🔻'} {p['drop_pct']:.0f}% — {p['name'][:60]}"
     if kind == "restock":
@@ -161,7 +178,7 @@ def subject(kind, p):
     return "Sayd"
 
 
-FORMATTERS = {"price": fmt_price, "offer": fmt_offer, "restock": fmt_restock, "system": fmt_system}
+FORMATTERS = {"price": fmt_price, "offer": fmt_offer, "restock": fmt_restock, "strong": fmt_strong, "system": fmt_system}
 
 
 def plain(h):
@@ -187,8 +204,13 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
     if not notifier.configured:
         log.warning("لا توجد قناة تنبيه مضبوطة (TELEGRAM_* أو NTFY_TOPIC أو SMTP_*)؛ %d تنبيه معلق", len(pending))
         return 0
-    items = [(r["id"], r["kind"], json.loads(r["payload"])) for r in pending]
     a = cfg["alerts"]
+    kinds = set(a.get("send_kinds") or FORMATTERS)
+    off = [r["id"] for r in pending if r["kind"] not in kinds]
+    if off:  # أنواع غير مفعّلة للإرسال: تبقى في السجل ولا تُرسل
+        db.mark_sent(off, ts, "off")
+        db.commit()
+    items = [(r["id"], r["kind"], json.loads(r["payload"])) for r in pending if r["kind"] in kinds]
     sent = 0
 
     # تنبيهات النظام دائماً منفردة
@@ -201,10 +223,11 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
             sent += 1
 
     # كل تنبيه في رسالة مستقلة (الأكبر نزولاً أولاً)، وما زاد عن max_individual يُجمع في ملخص
+    strongs = sorted((x for x in normal if x[1] == "strong"), key=lambda x: -x[2]["pct"])
     prices = sorted((x for x in normal if x[1] == "price"), key=lambda x: -x[2]["drop_pct"])
     restocks = [x for x in normal if x[1] == "restock"]
     offers = [x for x in normal if x[1] == "offer"]
-    ordered = prices + restocks + offers
+    ordered = strongs + prices + restocks + offers
     single, rest = ordered[:a["max_individual"]], ordered[a["max_individual"]:]
     for i, kind, p in single:
         h = FORMATTERS[kind](p)
@@ -217,7 +240,7 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
         return sent
 
     lines = []
-    for title, kind in (("نزول أسعار", "price"), ("رجوع توفر", "restock"), ("عروض", "offer")):
+    for title, kind in (("خصومات قوية", "strong"), ("نزول أسعار", "price"), ("رجوع توفر", "restock"), ("عروض", "offer")):
         group = [p for _, k, p in rest if k == kind]
         if group:
             lines.append(f"\n<b>{title} ({len(group)})</b>")
