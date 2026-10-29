@@ -283,7 +283,7 @@ a.variant:hover{transform:translateY(-1px);border-color:var(--gold)}
 .foot-brand{display:inline-flex;align-items:center;gap:10px;border-radius:12px}
 .foot-mark{width:34px;height:34px;border-radius:10px;box-shadow:0 2px 0 #0003}
 .foot-word{width:68px;height:23px;fill:var(--ink)}
-.foot p{margin:0;max-width:340px;font-size:13px;line-height:1.9;color:var(--muted)}
+.foot p{margin:0;max-width:360px;font-size:13px;line-height:1.9;color:var(--muted);text-wrap:balance}
 .toast{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));left:50%;transform:translate(-50%,20px);opacity:0;pointer-events:none;z-index:40;width:max-content;max-width:calc(100% - 32px);padding:12px 20px;border-radius:14px;font-size:13px;background:var(--tip);color:var(--on-tip);box-shadow:0 14px 34px -10px #0008;transition:.22s}
 .toast.show{opacity:1;transform:translate(-50%,0)}
 
