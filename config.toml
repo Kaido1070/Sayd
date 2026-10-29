@@ -22,9 +22,8 @@ banner_pages = ["/ar-sa/", "/ar-sa/promotions"]
 min_drop_pct = 5.0            # نزول عام
 low_window_days = 30          # أقل سعر خلال هذه المدة
 low_min_drop_pct = 1.0        # أقل نزول يُعتبر لشرط "أقل سعر خلال 30 يوم" (يمنع الإزعاج من فروق هللات)
-digest_threshold = 6          # أكثر من هذا العدد = رسالة ملخص
+max_individual = 60           # عدد الرسائل المنفصلة في التشغيل الواحد؛ الباقي يُجمع في رسالة ملخص
 verify_max = 80               # أقصى عدد نزولات يُتحقق منها من صفحة المنتج قبل التنبيه
-digest_max_items = 40
 alert_bundle_offers = false   # عروض "اشترِ X ووفّر على Y"
 min_price = 1                 # تجاهل الأسعار الأقل
 

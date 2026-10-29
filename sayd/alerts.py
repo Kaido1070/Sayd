@@ -172,36 +172,32 @@ def dispatch(db, notifier, cfg, ts, dashboard_url=""):
             db.mark_sent([i], ts, ch)
             sent += 1
 
-    if len(normal) <= a["digest_threshold"]:
-        for i, kind, p in normal:
-            h = FORMATTERS[kind](p)
-            ch = notifier.send(h, plain(h), subject(kind, p), p.get("url") or p.get("link"))
-            if ch:
-                db.mark_sent([i], ts, ch)
-                sent += 1
-            db.commit()
+    # كل تنبيه في رسالة مستقلة (الأكبر نزولاً أولاً)، وما زاد عن max_individual يُجمع في ملخص
+    prices = sorted((x for x in normal if x[1] == "price"), key=lambda x: -x[2]["drop_pct"])
+    restocks = [x for x in normal if x[1] == "restock"]
+    offers = [x for x in normal if x[1] == "offer"]
+    ordered = prices + restocks + offers
+    single, rest = ordered[:a["max_individual"]], ordered[a["max_individual"]:]
+    for i, kind, p in single:
+        h = FORMATTERS[kind](p)
+        ch = notifier.send(h, plain(h), subject(kind, p), p.get("url") or p.get("link"))
+        if ch:
+            db.mark_sent([i], ts, ch)
+            sent += 1
+        db.commit()
+    if not rest:
         return sent
 
-    prices = sorted((x for x in normal if x[1] == "price"), key=lambda x: -x[2]["drop_pct"])
-    offers = [x for x in normal if x[1] == "offer"]
-    restocks = [x for x in normal if x[1] == "restock"]
-    cap = a["digest_max_items"]
     lines = []
-    if prices:
-        lines.append(f"<b>نزول أسعار ({len(prices)})</b>")
-        lines += [fmt_price(p, short=True) for _, _, p in prices[:cap]]
-        if len(prices) > cap:
-            lines.append(f"… و{len(prices) - cap} غيرها" + (f" في اللوحة: {_e(dashboard_url)}" if dashboard_url else ""))
-    if restocks:
-        lines.append(f"\n<b>رجوع توفر ({len(restocks)})</b>")
-        lines += [fmt_restock(p, short=True) for _, _, p in restocks[:cap]]
-    if offers:
-        lines.append(f"\n<b>عروض ({len(offers)})</b>")
-        lines += [fmt_offer(p, short=True) for _, _, p in offers[:cap]]
-    header = f"📋 <b>ملخص Sayd</b> — {len(normal)} تنبيه\n\n"
+    for title, kind in (("نزول أسعار", "price"), ("رجوع توفر", "restock"), ("عروض", "offer")):
+        group = [p for _, k, p in rest if k == kind]
+        if group:
+            lines.append(f"\n<b>{title} ({len(group)})</b>")
+            lines += [FORMATTERS[kind](p, short=True) for p in group]
+    header = f"📋 <b>تكملة تنبيهات Sayd</b> — {len(rest)} تنبيه إضافي\n"
     channels = [notifier.send(c, plain(c), "Sayd ملخص", dashboard_url or None) for c in _chunks(header, lines)]
     if all(channels):
-        db.mark_sent([x[0] for x in normal], ts, channels[0])
-        sent += len(normal)
+        db.mark_sent([x[0] for x in rest], ts, channels[0])
+        sent += len(rest)
     db.commit()
     return sent
