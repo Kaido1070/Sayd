@@ -15,6 +15,7 @@
 
 <nav class="tabs" role="tablist">
   <button role="tab" data-tab="drops" aria-selected="true">آخر النزولات</button>
+  <button role="tab" data-tab="deals">أقوى العروض</button>
   <button role="tab" data-tab="offers">العروض</button>
   <button role="tab" data-tab="search">بحث</button>
   <button role="tab" data-tab="watch">المراقبة</button>
@@ -34,6 +35,27 @@
       </select>
     </div>
     <ul id="drops" class="list"></ul>
+  </section>
+
+  <section id="tab-deals" class="tab" hidden>
+    <div class="toolbar">
+      <select id="deals-min">
+        <option value="40">خصم 40% فأكثر</option>
+        <option value="50">خصم 50% فأكثر</option>
+        <option value="60" selected>خصم 60% فأكثر</option>
+        <option value="70">خصم 70% فأكثر</option>
+      </select>
+      <select id="deals-price">
+        <option value="0">كل الأسعار</option>
+        <option value="100">100 ريال فأكثر</option>
+        <option value="500" selected>500 ريال فأكثر</option>
+        <option value="1000">1000 ريال فأكثر</option>
+      </select>
+      <label><input type="checkbox" id="deals-stock" checked> المتوفر فقط</label>
+      <label><input type="checkbox" id="deals-extra"> من اكسترا فقط</label>
+    </div>
+    <p id="deals-note" class="muted"></p>
+    <ul id="deals" class="list"></ul>
   </section>
 
   <section id="tab-offers" class="tab" hidden>

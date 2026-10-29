@@ -60,6 +60,7 @@ class Change:
     window_min: float | None    # أقل سعر خلال نافذة الأيام قبل هذا التغيير
     history_id: int | None
     is_new: bool = False
+    was_price: float | None = None   # السعر قبل الخصم كما يعرضه الموقع
 
 
 class DB:
@@ -107,7 +108,7 @@ class DB:
                  badges, p.price, ts if p.price else None, p.price, ts if p.price else None, ts, ts, ts))
             hid = self._history(p.sku, ts, p.price, p.was_price, p.in_stock)
             return Change(p.sku, p.name, p.url, p.category, p.category_codes, None, p.price, None, p.in_stock,
-                          None, None, hid, is_new=True)
+                          None, None, hid, is_new=True, was_price=p.was_price)
 
         new_price = p.price if p.price is not None else row["price"]
         price_changed = new_price is not None and (row["price"] is None or abs(new_price - row["price"]) >= 0.01)
@@ -128,7 +129,8 @@ class DB:
         c.execute(f"UPDATE products SET {','.join(k + '=?' for k in upd)} WHERE sku=?", (*upd.values(), p.sku))
         hid = self._history(p.sku, ts, new_price, p.was_price, p.in_stock)
         return Change(p.sku, p.name, p.url or row["url"], p.category, p.category_codes, row["price"], new_price,
-                      None if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid)
+                      None if row["delisted"] else bool(row["in_stock"]), p.in_stock, prev_min, wmin, hid,
+                      was_price=p.was_price)
 
     def _history(self, sku, ts, price, was, stock):
         cur = self.conn.execute("INSERT INTO price_history(sku,ts,price,was_price,in_stock) VALUES(?,?,?,?,?)",

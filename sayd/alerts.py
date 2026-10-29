@@ -48,19 +48,34 @@ def price_alert(ch, cfg, watch):
             reasons.append(f"وصل للسعر المستهدف ({money(float(t))})")
     if not reasons:
         return None
+    disc = discount_pct(new, ch.was_price)
     return {
         "sku": ch.sku, "name": ch.name, "url": ch.url, "category": ch.category,
-        "old": old, "new": new, "drop_pct": round(drop, 2),
+        "old": old, "new": new, "drop_pct": round(drop, 2), "was": ch.was_price, "discount": round(disc, 1),
+        "strong": drop >= a["strong_drop_pct"] or disc >= a["strong_deal_pct"],
         "prev_min": ch.prev_min, "window_min": ch.window_min,
         "lowest_ever": ch.prev_min is None or new < ch.prev_min,
         "reasons": reasons, "watched": bool(rules),
     }
 
 
-def restock_alert(ch, watched_skus):
-    if ch.sku in watched_skus and ch.old_stock is False and ch.new_stock:
-        return {"sku": ch.sku, "name": ch.name, "url": ch.url, "price": ch.new_price}
-    return None
+def discount_pct(price, was):
+    """الخصم مقارنة بالسعر قبل الخصم المعروض في الموقع."""
+    if not price or not was or was <= price:
+        return 0.0
+    return (was - price) / was * 100
+
+
+def restock_alert(ch, watched_skus, cfg):
+    """رجوع التوفر: لقائمة المراقبة، ولأي منتج عليه خصم قوي (مثل عرض نفدت كميته ثم رجع)."""
+    if not (ch.old_stock is False and ch.new_stock) or ch.new_price is None:
+        return None
+    disc = discount_pct(ch.new_price, ch.was_price)
+    strong = disc >= cfg["alerts"]["strong_deal_pct"] and ch.new_price >= cfg["alerts"]["min_price"]
+    if ch.sku not in watched_skus and not strong:
+        return None
+    return {"sku": ch.sku, "name": ch.name, "url": ch.url, "price": ch.new_price, "was": ch.was_price,
+            "discount": round(disc, 1), "strong": strong, "watched": ch.sku in watched_skus}
 
 
 # ---------- الصياغة ----------
@@ -70,9 +85,10 @@ def _e(s):
 
 def fmt_price(p, short=False):
     if short:
-        return (f"🔻 <a href=\"{_e(p['url'])}\">{_e(p['name'][:70])}</a>\n"
+        return (f"{'🔥' if p.get('strong') else '🔻'} <a href=\"{_e(p['url'])}\">{_e(p['name'][:70])}</a>\n"
                 f"   {money(p['old'])} ← <b>{money(p['new'])}</b> (−{p['drop_pct']:.1f}%)" + (" ⭐" if p["lowest_ever"] else ""))
-    h = (f"🔻 <b>{_e(p['name'])}</b>\n"
+    h = (("🔥 <b>عرض قوي</b>\n" if p.get("strong") else "")
+         + f"🔻 <b>{_e(p['name'])}</b>\n"
          f"السعر القديم: {money(p['old'])} ريال\n"
          f"السعر الجديد: <b>{money(p['new'])} ريال</b> (−{p['drop_pct']:.1f}%)\n"
          f"أقل سعر سابق: {money(p['prev_min'])} ريال\n"
@@ -114,7 +130,8 @@ def fmt_offer(o, short=False):
 
 
 def fmt_restock(r, short=False):
-    s = f"✅ رجع متوفر: <b>{_e(r['name'])}</b> — {money(r['price'])} ريال"
+    disc = f" (خصم {r['discount']:.0f}% من {money(r['was'])})" if r.get("discount") else ""
+    s = ("🔥 " if r.get("strong") else "") + f"✅ رجع متوفر: <b>{_e(r['name'])}</b> — {money(r['price'])} ريال{disc}"
     return s if short else s + f"\n{_e(r['url'])}"
 
 
@@ -125,9 +142,9 @@ def fmt_system(s, short=False):
 def subject(kind, p):
     """عنوان مختصر للإيميل وإشعار ntfy."""
     if kind == "price":
-        return f"Sayd 🔻 {p['drop_pct']:.0f}% — {p['name'][:60]}"
+        return f"Sayd {'🔥' if p.get('strong') else '🔻'} {p['drop_pct']:.0f}% — {p['name'][:60]}"
     if kind == "restock":
-        return f"Sayd ✅ رجع متوفر — {p['name'][:60]}"
+        return f"Sayd {'🔥 ' if p.get('strong') else ''}✅ رجع متوفر — {p['name'][:60]}"
     if kind == "offer":
         return f"Sayd 🏷️ {'عرض جديد' if p['status'] == 'new' else 'تغيّر عرض'} — {p['text'][:50]}"
     return "Sayd"

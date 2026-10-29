@@ -28,6 +28,7 @@ document.querySelectorAll(".tabs button").forEach((b) =>
     document.querySelectorAll(".tabs button").forEach((x) => x.setAttribute("aria-selected", x === b));
     document.querySelectorAll(".tab").forEach((t) => (t.hidden = t.id !== "tab-" + b.dataset.tab));
     if (b.dataset.tab === "search") { loadProducts(); $("#q").focus(); }
+    if (b.dataset.tab === "deals") loadProducts().then(renderDeals);
     try { localStorage.setItem("sayd-tab", b.dataset.tab); } catch (e) {}
   })
 );
@@ -49,6 +50,34 @@ function renderDrops() {
         </div>
       </li>`).join("")
     : `<li class="muted">${summary.baseline_done ? "لا توجد نزولات مطابقة خلال آخر 14 يوم." : "المسح الأول جارٍ لتأسيس الأسعار؛ النزولات تظهر بعد اكتماله."}</li>`;
+}
+
+// ---------- أقوى العروض ----------
+const discOf = (p) => (p.was && p.price && p.was > p.price ? ((p.was - p.price) / p.was) * 100 : 0);
+
+function renderDeals() {
+  if (!products) return;
+  const min = +$("#deals-min").value, minPrice = +$("#deals-price").value;
+  const onlyStock = $("#deals-stock").checked, onlyExtra = $("#deals-extra").checked;
+  const list = products
+    .filter((p) => p.price >= minPrice && discOf(p) >= min && (!onlyStock || p.stock) && (!onlyExtra || !p.mp))
+    .sort((a, b) => discOf(b) - discOf(a));
+  $("#deals-note").textContent = `${list.length} منتج` + (list.length > 150 ? " (أول 150)" : "") +
+    " · الخصم محسوب من «السعر قبل الخصم» في الموقع، وبعض المنتجات سعرها قبل الخصم مبالغ فيه";
+  $("#deals").innerHTML = list.slice(0, 150).map((p) => {
+    const d = discOf(p), atLow = p.min != null && p.price <= p.min;
+    return `<li class="item click" data-sku="${esc(p.sku)}">
+      <div class="name">${esc(p.name)}</div>
+      <div class="row">
+        <span class="old">${fmt(p.was)}</span><span class="price">${fmt(p.price)} ريال</span>
+        <span class="tag drop">−${d.toFixed(0)}%</span>
+        ${d >= 85 ? '<span class="tag">تحقّق من السعر الأصلي</span>' : ""}
+        ${atLow ? '<span class="tag star">عند أقل سعر</span>' : ""}
+        ${p.stock ? "" : '<span class="tag out">غير متوفر</span>'}
+        <span class="muted">${esc((p.cat || "").split(" > ").pop())}${p.mp ? " · بائع خارجي" : ""}</span>
+      </div>
+    </li>`;
+  }).join("") || '<li class="muted">لا توجد منتجات مطابقة.</li>';
 }
 
 // ---------- العروض ----------
@@ -86,7 +115,7 @@ function loadProducts() {
   if (!productsLoading) {
     $("#search-note").textContent = "جارٍ تحميل الكتالوج…";
     productsLoading = getJSON("data/products.json").then((d) => {
-      products = d.items.map((r) => ({ sku: r[0], name: r[1], cat: d.cats[r[2]], price: r[3], was: r[4], stock: r[5], min: r[6], max: r[7], avg: r[8], key: norm(r[1] + " " + r[0]) }));
+      products = d.items.map((r) => ({ sku: r[0], name: r[1], cat: d.cats[r[2]], price: r[3], was: r[4], stock: r[5], min: r[6], max: r[7], avg: r[8], mp: r[9], key: norm(r[1] + " " + r[0]) }));
       $("#search-note").textContent = `${products.length.toLocaleString("en")} منتج`;
       search();
     });
@@ -258,6 +287,7 @@ function renderStatus() {
   $("#offers-type").innerHTML += types.map((t) => `<option>${esc(t)}</option>`).join("");
   ["#drops-stock", "#drops-lowest", "#drops-min"].forEach((s) => $(s).addEventListener("change", renderDrops));
   ["#offers-type", "#offers-code"].forEach((s) => $(s).addEventListener("change", renderOffers));
+  ["#deals-min", "#deals-price", "#deals-stock", "#deals-extra"].forEach((s) => $(s).addEventListener("change", renderDeals));
   let timer;
   $("#q").addEventListener("input", () => { clearTimeout(timer); timer = setTimeout(search, 150); });
   ["#sort", "#search-stock"].forEach((s) => $(s).addEventListener("change", search));

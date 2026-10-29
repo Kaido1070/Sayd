@@ -83,8 +83,9 @@ class Runner:
             pa = alerts.price_alert(ch, self.cfg, self.watch)
             if pa:
                 self.to_verify.append((ch, pa))
-            ra = alerts.restock_alert(ch, watched)
-            if ra and self.db.queue_alert("restock", ch.sku, ch.history_id, ra, ts):
+            ra = alerts.restock_alert(ch, watched, self.cfg)
+            # لا يتكرر تنبيه رجوع التوفر لنفس المنتج بنفس السعر
+            if ra and self.db.queue_alert("restock", ch.sku, ch.new_price, ra, ts):
                 self.stats["alerts"] += 1
         self.db.commit()
 

@@ -66,12 +66,13 @@ def build(db, cfg, out):
     hist, avg = history_stats(db, ts, cfg["alerts"]["low_window_days"])
 
     # فهرس البحث المختصر: الأقسام في قائمة منفصلة، والرابط يُبنى من SKU (/ar-sa/p/<sku>)
-    # items: [sku, name, category_index, price, was, stock, min, max, avg30]
+    # items: [sku, name, category_index, price, was, stock, min, max, avg30, marketplace]
     cats, items = {}, []
     for r in db.conn.execute("SELECT * FROM products ORDER BY sku"):
         ci = cats.setdefault(r["category"] or "", len(cats))
         items.append([r["sku"], r["name"], ci, _r(r["price"]), _r(r["was_price"]),
-                      0 if r["delisted"] else r["in_stock"], _r(r["min_price"]), _r(r["max_price"]), _r(avg.get(r["sku"]))])
+                      0 if r["delisted"] else r["in_stock"], _r(r["min_price"]), _r(r["max_price"]), _r(avg.get(r["sku"])),
+                      r["marketplace"] or 0])
     _dump(tmp / "data" / "products.json", {"cats": list(cats), "items": items})
 
     shards = defaultdict(dict)
