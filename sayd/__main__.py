@@ -23,6 +23,7 @@ class Runner:
     def __init__(self, cfg, db, ex, notifier, deadline, force_full=False, force_hot=False):
         self.cfg, self.db, self.ex, self.notifier = cfg, db, ex, notifier
         self.deadline = deadline
+        self.started = time.time()
         self.force_full, self.force_hot = force_full, force_hot
         self.stats = {"seen": 0, "changes": 0, "alerts": 0, "errors": 0}
         self.phases = []
@@ -159,13 +160,13 @@ class Runner:
         return ref[0] if ref else None
 
     # ---------- المراحل ----------
-    def paged_scan(self, label, where=None, state_key=None):
+    def paged_scan(self, label, where=None, state_key=None, until=None):
         """يمر على كل صفحات الاستعلام. الصفحات متداخلة بـ OVERLAP منتجات حتى لا يضيع منتج
         إذا انحذف منتج قبله أثناء المسح. state_key يحفظ نقطة التوقف للاستكمال في التشغيل التالي."""
         st = (self.db.get(state_key) if state_key else None) or {"start": 0, "started_at": now(), "total": None}
         log.info("%s: من الموضع %d", label, st["start"])
         seen, fails, suspicious = set(), 0, 0
-        while self.left() > 90:
+        while self.left() > 90 and (until is None or time.time() < until):
             total, products = self.listing(f"{label} start={st['start']}", start=st["start"], where=where)
             if total is None:
                 fails += 1
@@ -195,31 +196,32 @@ class Runner:
         log.info("%s: توقف عند %d/%s وسيكمل لاحقاً", label, st["start"], st["total"])
         return st, False
 
-    def full_scan(self):
+    def full_scan(self, until=None):
+        """المسح الكامل على دفعات: كل تشغيل يكمل منه ما يسمح به وقته (until) حتى لا يؤخر تحديث العروض."""
         st = self.db.get("full_scan")
         self.phases.append(f"full@{st['start'] if st else 0}")
-        st, done = self.paged_scan("مسح كامل", state_key="full_scan")
+        st, done = self.paged_scan("مسح كامل", state_key="full_scan", until=until)
         if not done:
             return
         seen = self.db.conn.execute("SELECT COUNT(*) FROM products WHERE last_seen>=?", (st["started_at"],)).fetchone()[0]
         if seen < st["total"]:
             self.error("full", f"اكتمل المسح لكن ظهر {seen} من {st['total']} منتج")
-        self.sitemap_pass(st["started_at"])
+        self.sitemap_queue(st["started_at"])
         ts = now()
         if st["total"] and seen >= 0.9 * st["total"]:
             n = self.db.delist_unseen(st["started_at"], ts)
             if n:
                 log.info("%d منتج لم يعد ظاهراً في الكتالوج", n)
         self.db.set("last_full_done_at", ts)
-        self.db.set("last_hot_at", ts)  # المسح الكامل يشمل كل العروض
         if not self.baseline_done:
             self.db.set("baseline_done", True)
             self.db.set("baseline_done_at", ts)
             log.info("اكتمل المسح الأول (تأسيس الأسعار) — التنبيهات تبدأ من التشغيل القادم")
         self.db.commit()
 
-    def sitemap_pass(self, since):
-        """منتجات لها صفحات حية في الموقع لكن محرك البحث لا يرجعها: تُفحص من صفحاتها مباشرة."""
+    def sitemap_queue(self, since):
+        """بعد كل مسح كامل: قائمة المنتجات التي لها صفحات حية لكن محرك البحث لم يرجعها.
+        تُفحص من صفحاتها على دفعات في التشغيلات التالية (sitemap_step)."""
         sc = self.cfg["scan"]
         if self.due("last_sitemap_at", sc["sitemap_every_hours"] * 3600, 30 * 60):
             try:
@@ -232,12 +234,19 @@ class Runner:
                 self.db.set("last_sitemap_at", now())
                 self.db.commit()
             self.menu_refresh()
-        rows = self.db.sitemap_unseen(since, now(), sc["sitemap_mp_batch"])
-        self.phases.append(f"sitemap:{len(rows)}")
+        self.db.set("sitemap_queue", self.db.sitemap_unseen(since, now(), sc["sitemap_mp_batch"]))
+        self.db.commit()
+
+    def sitemap_step(self, until=None):
+        rows = self.db.get("sitemap_queue") or []
+        if not rows:
+            return
+        done = 0
         blocked = 0
         for sku, url in rows:
-            if self.left() < 120:
+            if self.left() < 120 or (until is not None and time.time() >= until):
                 break
+            done += 1
             ts = now()
             try:
                 page = self.ex.product_page(url)
@@ -262,6 +271,9 @@ class Runner:
                 self.process([self.page_product(sku, page) if known else page.product], source="pdp")
             self.handle_page(sku, page, observe=False)
             self.db.commit()
+        self.db.set("sitemap_queue", rows[done:] or None)  # الباقي يكمل في التشغيل التالي
+        self.phases.append(f"sitemap:{done}/{len(rows)}")
+        self.db.commit()
 
     def offers_scan(self):
         """كل منتج عليه خصم أو علامة عرض أو شارة — وليس فقط الأعلى خصماً."""
@@ -498,8 +510,8 @@ class Runner:
             found = self.ex.discover()
             if found and found != self.db.get("unbxd"):
                 self.db.set("unbxd", found)
-        if full_due:
-            self.full_scan()           # يشمل كل المنتجات بما فيها العروض
+        if not self.baseline_done:
+            self.full_scan()           # المسح الأول (تأسيس الأسعار) دفعة واحدة
         elif hot_due:
             self.offers_scan()
         if self.baseline_done and (full_due or hot_due):
@@ -510,6 +522,13 @@ class Runner:
             self.verify_prices()
             self.enrich_deals()
             self.strong_scan()
+        if self.baseline_done:
+            # المسح الكامل وصفحات خريطة الموقع على دفعات بما بقي من وقت التشغيل (run_budget_minutes)،
+            # حتى ينتهي كل تشغيل قبل التالي ولا يتأخر تحديث العروض والموقع
+            until = self.started + sc["run_budget_minutes"] * 60
+            if full_due:
+                self.full_scan(until)
+            self.sitemap_step(until)
         self.badge_offers()
         ts = now()
         self.db.expire_offers(ts, ts_minus(ts, days=4))

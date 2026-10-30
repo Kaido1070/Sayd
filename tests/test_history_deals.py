@@ -294,5 +294,31 @@ class StrongDeals(unittest.TestCase):
         self.assertEqual(len(self.sent()), 2)
 
 
+class SitemapSteps(unittest.TestCase):
+    """صفحات خريطة الموقع تُفحص على دفعات حسب وقت التشغيل، والباقي يكمل في التشغيل التالي."""
+    def setUp(self):
+        self.db = DB(":memory:")
+        self.opened = []
+        test = self
+
+        class Ex:
+            def product_page(self, url):
+                sku = url.rsplit("/", 1)[1]
+                test.opened.append(sku)
+                return ProductPage(sku, 100, None, True, [])
+        self.r = Runner(config.load(), self.db, Ex(), None, time.time() + 600)
+        self.db.set("sitemap_queue", [["A", "https://www.extra.com/ar-sa/x/p/A"], ["B", "https://www.extra.com/ar-sa/x/p/B"]])
+
+    def test_no_time_left_keeps_queue(self):
+        self.r.sitemap_step(until=time.time() - 1)
+        self.assertEqual(self.opened, [])
+        self.assertEqual(len(self.db.get("sitemap_queue")), 2)
+
+    def test_finishes_queue(self):
+        self.r.sitemap_step(until=time.time() + 60)
+        self.assertEqual(self.opened, ["A", "B"])
+        self.assertIsNone(self.db.get("sitemap_queue"))
+
+
 if __name__ == "__main__":
     unittest.main()
