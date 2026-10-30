@@ -21,7 +21,7 @@ JUNK_BRANDS = {"القيمة الإفتراضية", "القيمة الافترا
 def template_hash():
     """بصمة قالب الموقع: إذا تغيّرت يُنشر الموقع فوراً دون انتظار موعد النشر."""
     h = hashlib.sha1()
-    for f in sorted(WEB.rglob("*")) + [Path(__file__), ROOT / "sayd" / "deals.py", ROOT / "sayd" / "categories.py"]:
+    for f in sorted(WEB.rglob("*")) + sorted((ROOT / "functions").rglob("*")) + [Path(__file__), ROOT / "sayd" / "deals.py", ROOT / "sayd" / "categories.py"]:
         if f.is_file():
             h.update(f.name.encode() + f.read_bytes())
     return h.hexdigest()[:16]

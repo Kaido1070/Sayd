@@ -122,7 +122,7 @@ jobs:
               || echo "::warning::تعذّر تحديث فرع live (الموقع يبقى على آخر نسخة منشورة)"
           fi
           if [ -f data/.publish_site ]; then
-            mkdir -p out/site && cp -r data/site out/site/
+            mkdir -p out/site && cp -r data/site out/site/ && cp -r functions out/site/   # functions: دوال Cloudflare Pages (البيانات الحية)
             publish data out/site
           fi
 

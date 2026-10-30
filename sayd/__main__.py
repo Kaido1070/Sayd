@@ -2,8 +2,10 @@
 import argparse
 import json
 import logging
+import queue
 import re
 import sys
+import threading
 import time
 import traceback
 from dataclasses import replace
@@ -17,6 +19,73 @@ from .notify import Notifier
 
 log = logging.getLogger("sayd")
 OVERLAP = 5  # تداخل الصفحات
+
+
+class Lane(threading.Thread):
+    """مسار خلفي: يجلب صفحات المسح الكامل ثم صفحات خريطة الموقع بالتوازي مع فحص العروض.
+    يجلب فقط (بعميل HTTP مستقل)؛ كل الكتابة في قاعدة البيانات تتم في الخيط الرئيسي (Runner.drain)."""
+
+    def __init__(self, ex, full, rows, until, deadline):
+        super().__init__(daemon=True)
+        self.ex, self.full, self.rows, self.until, self.deadline = ex, full, rows, until, deadline
+        self.out = queue.Queue()
+        self.halt = threading.Event()
+
+    def time_ok(self):
+        return not self.halt.is_set() and time.time() < self.until and self.deadline - time.time() > 120
+
+    def run(self):
+        try:
+            if self.full is not None:
+                self._full(dict(self.full))
+            self._sitemap()
+        except Exception as e:  # لا يُسقط التشغيل؛ يُسجَّل كخطأ
+            self.out.put(("error", "مسار خلفي", f"{type(e).__name__}: {e}"))
+        finally:
+            self.out.put(("end",))
+
+    def _full(self, st):
+        fails = suspicious = 0
+        while self.time_ok():
+            t = now()
+            try:
+                total, products, bad = self.ex.listing(start=st["start"])
+            except (FetchError, Disallowed) as e:
+                self.out.put(("fail", f"مسح كامل start={st['start']}", str(e)))
+                fails += 1
+                if fails >= 3:
+                    return
+                continue
+            # محرك البحث أحياناً يرجع إجمالياً أصغر بكثير لطلب واحد: نعيد الطلب مرتين قبل قبوله
+            odd = st["total"] and (total < 0.9 * st["total"] or (not products and st["start"] < total))
+            if odd and suspicious < 2:
+                suspicious += 1
+                self.out.put(("error", "مسح كامل", f"استجابة غير متسقة عند {st['start']}: الإجمالي {total} بدل {st['total']}"))
+                time.sleep(5)
+                continue
+            fails = suspicious = 0
+            last = st["start"] + PAGE_SIZE >= total
+            self.out.put(("list", t, st["start"], total, products, bad, last))
+            st["total"] = total
+            if last:
+                return
+            st["start"] += PAGE_SIZE - OVERLAP
+
+    def _sitemap(self):
+        blocked = 0
+        for sku, url in self.rows:
+            if not self.time_ok():
+                return
+            t = now()
+            try:
+                self.out.put(("page", t, sku, url, self.ex.product_page(url), None))
+            except Blocked as e:
+                self.out.put(("page", t, sku, url, None, e))
+                blocked += 1
+                if blocked >= 3:
+                    return
+            except (FetchError, Disallowed) as e:
+                self.out.put(("page", t, sku, url, None, e))
 
 
 class Runner:
@@ -35,6 +104,9 @@ class Runner:
         self.badge_skus = {}
         self.to_verify = []
         self.blocked = 0
+        self.lane = None
+        self.lane_end = self._draining = False
+        self.lane_ex = None  # للاختبارات: عميل بديل للمسار الخلفي
 
     # ---------- مساعدات ----------
     def left(self):
@@ -55,6 +127,7 @@ class Runner:
         return last is None or (parse_ts(now()) - parse_ts(last)).total_seconds() >= seconds - slack
 
     def listing(self, context, **kw):
+        self.drain()
         try:
             total, products, bad = self.ex.listing(**kw)
         except (FetchError, Disallowed) as e:
@@ -160,13 +233,13 @@ class Runner:
         return ref[0] if ref else None
 
     # ---------- المراحل ----------
-    def paged_scan(self, label, where=None, state_key=None, until=None):
+    def paged_scan(self, label, where=None, state_key=None):
         """يمر على كل صفحات الاستعلام. الصفحات متداخلة بـ OVERLAP منتجات حتى لا يضيع منتج
         إذا انحذف منتج قبله أثناء المسح. state_key يحفظ نقطة التوقف للاستكمال في التشغيل التالي."""
         st = (self.db.get(state_key) if state_key else None) or {"start": 0, "started_at": now(), "total": None}
         log.info("%s: من الموضع %d", label, st["start"])
         seen, fails, suspicious = set(), 0, 0
-        while self.left() > 90 and (until is None or time.time() < until):
+        while self.left() > 90:
             total, products = self.listing(f"{label} start={st['start']}", start=st["start"], where=where)
             if total is None:
                 fails += 1
@@ -196,13 +269,15 @@ class Runner:
         log.info("%s: توقف عند %d/%s وسيكمل لاحقاً", label, st["start"], st["total"])
         return st, False
 
-    def full_scan(self, until=None):
-        """المسح الكامل على دفعات: كل تشغيل يكمل منه ما يسمح به وقته (until) حتى لا يؤخر تحديث العروض."""
+    def full_scan(self):
+        """المسح الأول (تأسيس الأسعار) في الخيط الرئيسي. بعده يجري المسح الكامل في المسار الخلفي."""
         st = self.db.get("full_scan")
         self.phases.append(f"full@{st['start'] if st else 0}")
-        st, done = self.paged_scan("مسح كامل", state_key="full_scan", until=until)
-        if not done:
-            return
+        st, done = self.paged_scan("مسح كامل", state_key="full_scan")
+        if done:
+            self.full_done(st)
+
+    def full_done(self, st):
         seen = self.db.conn.execute("SELECT COUNT(*) FROM products WHERE last_seen>=?", (st["started_at"],)).fetchone()[0]
         if seen < st["total"]:
             self.error("full", f"اكتمل المسح لكن ظهر {seen} من {st['total']} منتج")
@@ -221,7 +296,7 @@ class Runner:
 
     def sitemap_queue(self, since):
         """بعد كل مسح كامل: قائمة المنتجات التي لها صفحات حية لكن محرك البحث لم يرجعها.
-        تُفحص من صفحاتها على دفعات في التشغيلات التالية (sitemap_step)."""
+        تُفحص من صفحاتها في المسار الخلفي على دفعات عبر التشغيلات."""
         sc = self.cfg["scan"]
         if self.due("last_sitemap_at", sc["sitemap_every_hours"] * 3600, 30 * 60):
             try:
@@ -235,44 +310,119 @@ class Runner:
                 self.db.commit()
             self.menu_refresh()
         self.db.set("sitemap_queue", self.db.sitemap_unseen(since, now(), sc["sitemap_mp_batch"]))
+        self.sm_replaced = True
         self.db.commit()
 
-    def sitemap_step(self, until=None):
-        rows = self.db.get("sitemap_queue") or []
-        if not rows:
+    # ---------- المسار الخلفي (المسح الكامل وخريطة الموقع) ----------
+    def start_lane(self, until, full):
+        """يبدأ المسح الكامل (إن كان مستحقاً أو جارياً) وصفحات خريطة الموقع بالتوازي مع فحص العروض."""
+        st = None
+        if full:
+            st = self.db.get("full_scan") or {"start": 0, "started_at": now(), "total": None}
+            self.db.set("full_scan", st)
+            self.db.commit()
+            self.phases.append(f"full@{st['start']}")
+        self.full_st, self.full_seen = st, set()
+        self.sm_rows = self.db.get("sitemap_queue") or []
+        self.sm_done, self.sm_replaced = 0, False
+        if st is None and not self.sm_rows:
             return
-        done = 0
-        blocked = 0
-        for sku, url in rows:
-            if self.left() < 120 or (until is not None and time.time() >= until):
-                break
-            done += 1
-            ts = now()
-            try:
-                page = self.ex.product_page(url)
-            except Blocked as e:
-                blocked += 1
-                self.error(f"sitemap {sku}", e)
-                if blocked >= 3:
-                    break
-                continue
-            except Disallowed:  # robots.txt يمنعها (صفحات خدمات الضمان مثلاً)
-                self.db.mark_sitemap(sku, ts, dead_days=30)
-                continue
-            except FetchError as e:
-                if e.status in (404, 410):  # صفحة محذوفة: لا تُعاد قبل مدة
-                    self.db.mark_sitemap(sku, ts, dead_days=7 if not sku.startswith("MP") else 30)
-                else:
-                    self.error(f"sitemap {sku}", e)
-                continue
-            self.db.mark_sitemap(sku, ts)
-            if page.product and page.product.sku == sku:
+        sc = self.cfg["scan"]
+        if self.lane_ex is None:
+            self.lane_http = Http(self.cfg["site"]["user_agent"], sc["delay_min"], sc["delay_max"], self.deadline)
+            ex = Extra(self.lane_http, self.cfg["site"]["include_marketplace"], self.db.get("unbxd"))
+        else:
+            self.lane_http, ex = None, self.lane_ex
+        self.lane = Lane(ex, st, self.sm_rows, until, self.deadline)
+        self.lane.start()
+
+    def finish_lane(self):
+        if not self.lane:
+            return
+        self.drain(wait=True)
+        self.lane.join()
+        if self.lane_http:
+            self.lane_http.close()
+        if not self.sm_replaced:  # الباقي يكمل في التشغيل التالي
+            self.db.set("sitemap_queue", self.sm_rows[self.sm_done:] or None)
+        if self.sm_rows:
+            self.phases.append(f"sitemap:{self.sm_done}/{len(self.sm_rows)}")
+        self.lane = None
+        self.db.commit()
+
+    def fresh_only(self, products, t):
+        """ما جلبه المسار الخلفي قبل رصد أحدث له في فحص العروض لا يُسجَّل (حتى لا يرجع سعر قديم)."""
+        if not products:
+            return products
+        skus = [p.sku for p in products]
+        newer = {r[0] for r in self.db.conn.execute(
+            f"SELECT sku FROM products WHERE last_seen>=? AND sku IN ({','.join('?' * len(skus))})", (t, *skus))}
+        return [p for p in products if p.sku not in newer]
+
+    def drain(self, wait=False):
+        """يسجل ما جلبه المسار الخلفي. wait=True: ينتظر حتى ينتهي المسار."""
+        lane = self.lane
+        if not lane or self.lane_end or self._draining:
+            return
+        self._draining = True  # process() داخل التسجيل لا يعيد الدخول هنا
+        try:
+            while True:
+                try:
+                    item = lane.out.get(timeout=1) if wait else lane.out.get_nowait()
+                except queue.Empty:
+                    if wait:
+                        continue  # المسار يضع «end» دائماً عند انتهائه
+                    return
+                kind = item[0]
+                if kind == "end":
+                    self.lane_end = True
+                    return
+                if kind == "error":
+                    self.error(item[1], item[2])
+                elif kind == "fail":
+                    self.pages_failed += 1
+                    self.error(item[1], item[2])
+                elif kind == "list":
+                    self._lane_list(*item[1:])
+                elif kind == "page":
+                    self._lane_page(*item[1:])
+        finally:
+            self._draining = False
+
+    def _lane_list(self, t, start, total, products, bad, last):
+        st = self.full_st
+        self.pages_ok += 1
+        self.parse_bad += bad
+        fresh = [p for p in products if p.sku not in self.full_seen]
+        self.full_seen.update(p.sku for p in products)
+        self.process(self.fresh_only(fresh, t))
+        st["total"] = total
+        if last:
+            self.db.set("full_scan", None)
+            self.db.commit()
+            self.full_done(st)
+        else:
+            st["start"] = start + PAGE_SIZE - OVERLAP
+            self.db.set("full_scan", st)
+            self.db.commit()
+
+    def _lane_page(self, t, sku, url, page, err):
+        self.sm_done += 1
+        if isinstance(err, Blocked):
+            self.error(f"sitemap {sku}", err)
+        elif isinstance(err, Disallowed):  # robots.txt يمنعها (صفحات خدمات الضمان مثلاً)
+            self.db.mark_sitemap(sku, t, dead_days=30)
+        elif err is not None:
+            if getattr(err, "status", None) in (404, 410):  # صفحة محذوفة: لا تُعاد قبل مدة
+                self.db.mark_sitemap(sku, t, dead_days=7 if not sku.startswith("MP") else 30)
+            else:
+                self.error(f"sitemap {sku}", err)
+        else:
+            self.db.mark_sitemap(sku, t)
+            if page.product and page.product.sku == sku and self.fresh_only([page.product], t):
                 known = self.db.product(sku) is not None
                 self.process([self.page_product(sku, page) if known else page.product], source="pdp")
             self.handle_page(sku, page, observe=False)
-            self.db.commit()
-        self.db.set("sitemap_queue", rows[done:] or None)  # الباقي يكمل في التشغيل التالي
-        self.phases.append(f"sitemap:{done}/{len(rows)}")
         self.db.commit()
 
     def offers_scan(self):
@@ -341,6 +491,7 @@ class Runner:
             self.save_offer(raw, [sku], ts, alerting)
 
     def fetch_page(self, sku, url):
+        self.drain()
         try:
             return self.ex.product_page(url)
         except Blocked as e:
@@ -512,8 +663,12 @@ class Runner:
                 self.db.set("unbxd", found)
         if not self.baseline_done:
             self.full_scan()           # المسح الأول (تأسيس الأسعار) دفعة واحدة
-        elif hot_due:
-            self.offers_scan()
+        else:
+            # المسح الكامل وصفحات خريطة الموقع في مسار خلفي بالتوازي، حتى نهاية run_budget_minutes،
+            # فلا يتأخر فحص العروض ولا ينتهي التشغيل بعد موعد التالي
+            self.start_lane(self.started + sc["run_budget_minutes"] * 60, full_due)
+            if hot_due:
+                self.offers_scan()
         if self.baseline_done and (full_due or hot_due):
             self.watch_scan()
             self.preorder_scan()
@@ -522,13 +677,7 @@ class Runner:
             self.verify_prices()
             self.enrich_deals()
             self.strong_scan()
-        if self.baseline_done:
-            # المسح الكامل وصفحات خريطة الموقع على دفعات بما بقي من وقت التشغيل (run_budget_minutes)،
-            # حتى ينتهي كل تشغيل قبل التالي ولا يتأخر تحديث العروض والموقع
-            until = self.started + sc["run_budget_minutes"] * 60
-            if full_due:
-                self.full_scan(until)
-            self.sitemap_step(until)
+        self.finish_lane()
         self.badge_offers()
         ts = now()
         self.db.expire_offers(ts, ts_minus(ts, days=4))
@@ -580,6 +729,8 @@ def main(argv=None):
         worked = runner.run()
     except Exception as e:  # خطأ غير متوقع: سجّله ونبّه، والبيانات المحفوظة حتى الآن تبقى
         status = "crash"
+        if runner.lane:
+            runner.lane.halt.set()
         log.error("خطأ غير متوقع:\n%s", traceback.format_exc())
         db.conn.rollback()
         ts = now()

@@ -99,9 +99,9 @@ $("theme").addEventListener("click", () => {
 setTheme(getTheme());
 
 // ---------- البيانات ----------
-// البيانات تتحدث كل نصف ساعة في فرع live على GitHub (الموقع نفسه يُبنى كل ساعتين)؛
-// نأخذ الأحدث بينه وبين نسخة الموقع، فإن تعذّر live بقي الموقع على نسخته
-const LIVE = "https://raw.githubusercontent.com/Kaido1070/Sayd/live/";
+// البيانات تتحدث كل نصف ساعة في فرع live على GitHub، ويقرؤها الموقع من /live/ على نفس النطاق
+// (الموقع نفسه يُبنى كل ساعتين)؛ نأخذ الأحدث بينه وبين نسخة الموقع، فإن تعذّر live بقي على نسخته
+const LIVE = "/live/";
 let DATA = "/data/";
 async function getJSON(path, ms) {
   const ctl = ms ? new AbortController() : null;
