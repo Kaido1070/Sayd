@@ -1,0 +1,54 @@
+{
+ "generated_at": "2026-11-07T19:37:38Z",
+ "history_started_at": "2026-10-29T06:05:47Z",
+ "products_known": 34665,
+ "products_active": 34046,
+ "products_delisted": 619,
+ "seen_last_24h": 34070,
+ "stale_not_seen_since": "2026-11-07T09:37:38Z",
+ "stale_count": 0,
+ "stale_by_dept": {},
+ "stale_sample": [],
+ "last_full_scan": {
+  "started_at": "2026-11-07T17:57:44Z",
+  "finished_at": "2026-11-07T18:17:49Z",
+  "products_seen": 58632,
+  "note": "pdp 100201837: robots.txt يمنع /ar-sa/mri/accidental-warranty-services/accidental-warranty-sales/accidental-warranty-service-aws-tv-subscription/p/100201837"
+ },
+ "full_scan_in_progress": null,
+ "search_api_total_last_seen": null,
+ "sitemap": {
+  "urls": 52029,
+  "checked": 21911,
+  "dead_or_blocked": 18298,
+  "not_in_db_unchecked": 0
+ },
+ "price_periods": 49694,
+ "price_changes": 8974,
+ "deals": {
+  "active": 1144,
+  "ended": 179
+ },
+ "errors_24h": {
+  "pdp 100310896": 49,
+  "pdp 100310891": 49,
+  "pdp 100310885": 49,
+  "pdp 100310880": 49,
+  "pdp 100310869": 49,
+  "pdp 100201837": 49,
+  "pdp 100315730": 38,
+  "pdp MP00013275": 20,
+  "pdp MP00065237": 11,
+  "pdp MP00046995": 11,
+  "pdp MP00059595": 10,
+  "مسح كامل start=15770": 3,
+  "مسح العروض start=159": 3,
+  "watch": 1,
+  "preorder": 1,
+  "pdp MP00059548": 1,
+  "pdp MP00008937": 1,
+  "pdp 100524104": 1,
+  "pdp 100311607": 1,
+  "full": 1
+ }
+}
