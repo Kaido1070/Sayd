@@ -1,0 +1,50 @@
+{
+ "generated_at": "2026-11-14T21:35:07Z",
+ "history_started_at": "2026-10-29T06:05:47Z",
+ "products_known": 36176,
+ "products_active": 34423,
+ "products_delisted": 1753,
+ "seen_last_24h": 34536,
+ "stale_not_seen_since": "2026-11-14T11:35:07Z",
+ "stale_count": 0,
+ "stale_by_dept": {},
+ "stale_sample": [],
+ "last_full_scan": {
+  "started_at": "2026-11-14T18:47:16Z",
+  "finished_at": "2026-11-14T19:04:29Z",
+  "products_seen": 57942,
+  "note": "pdp 100310881: robots.txt يمنع /ar-sa/computer/computers-accessories/laptop-bags/cartinoe-bg06l-15-to-15-6-inch-laptop-briefcase-pu-leather-skyblue/p/100310881"
+ },
+ "full_scan_in_progress": null,
+ "search_api_total_last_seen": null,
+ "sitemap": {
+  "urls": 52876,
+  "checked": 24507,
+  "dead_or_blocked": 19467,
+  "not_in_db_unchecked": 0
+ },
+ "price_periods": 70639,
+ "price_changes": 23849,
+ "deals": {
+  "active": 1370,
+  "ended": 802
+ },
+ "errors_24h": {
+  "pdp MP00071753": 48,
+  "pdp 100310896": 48,
+  "pdp 100310891": 48,
+  "pdp 100310885": 48,
+  "pdp 100310880": 48,
+  "pdp 100310869": 48,
+  "pdp 100201837": 48,
+  "pdp 100310881": 44,
+  "pdp MP00057451": 22,
+  "pdp 100475176": 13,
+  "pdp 100315730": 9,
+  "pdp MP00009253": 2,
+  "pdp MP00009238": 2,
+  "pdp MP00009228": 2,
+  "pdp MP00009221": 2,
+  "pdp MP00060528": 1
+ }
+}
