@@ -503,6 +503,7 @@ class Runner:
         except SiteChanged as e:
             self.pdp_changed += 1
             self.error(f"pdp {sku}", e)
+            self.db.mark_pdp(sku, now())  # صفحة بياناتها ناقصة: تُعاد بعد مدة إعادة الفحص لا كل تشغيل
         except (FetchError, Disallowed) as e:
             self.error(f"pdp {sku}", e)
             if isinstance(e, Disallowed) or e.status in (404, 410):
