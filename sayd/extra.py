@@ -10,6 +10,7 @@ import html
 import json
 import logging
 import re
+import time
 from dataclasses import dataclass, field
 
 from .net import FetchError
@@ -19,6 +20,7 @@ log = logging.getLogger("sayd.extra")
 BASE = "https://www.extra.com"
 MENU_SKIP = re.compile(r"عرض الكل|استعرض الكل|تسوق الكل|شاهد الكل|View All|بطاقة هدايا|حسب الماركه|حسب الماركة|الماركات|Outlet|اوتليت|Buying Guide")
 LOCALE = "ar-sa"
+AUTH_RETRY_WAITS = (30, 90, 180)  # ثوانٍ بين محاولات البحث بعد رفض 401 (5 دقائق إجمالاً)
 DISCOVERY_PAGE = f"{BASE}/{LOCALE}/mobiles-tablets/c/2"
 AMPLIENCE_JSON = "https://extra.cdn.content.amplience.net/content/id/{id}?depth=all&format=inlined&locale=ar-SA"
 PAGE_SIZE = 100  # أقصى ما يقبله Unbxd
@@ -217,7 +219,7 @@ class Extra:
             params["q"] = "*"
             kind = "search"
         params["filter"] = filters
-        r = self.http.get(self._endpoint(kind), params=params, headers={"Origin": BASE, "Referer": BASE + "/"})
+        r = self._search(kind, params)
         try:
             data = r.json()
             resp = data["response"]
@@ -239,6 +241,18 @@ class Extra:
                 continue
             products.append(prod)
         return total, products, bad
+
+    def _search(self, kind, params):
+        """خدمة البحث ترفض الطلبات أحياناً (401) لدقائق ثم تعود: ننتظر ونعيد قراءة المفاتيح قبل اعتبارها فشلاً."""
+        for wait in (*AUTH_RETRY_WAITS, None):
+            try:
+                return self.http.get(self._endpoint(kind), params=params, headers={"Origin": BASE, "Referer": BASE + "/"})
+            except FetchError as e:
+                if e.status != 401 or wait is None or self.http.time_left() < wait + 120:
+                    raise
+                log.warning("خدمة البحث رفضت الطلب (401)؛ إعادة المحاولة بعد %d ثانية", wait)
+                time.sleep(wait)
+                self.discover()
 
     def _parse(self, p, has_hd=True):
         sku = str(p["productCode"]).strip()

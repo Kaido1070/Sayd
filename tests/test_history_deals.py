@@ -336,5 +336,45 @@ class BackgroundLane(unittest.TestCase):
         self.db.observe(p, "2099-01-01T00:00:00Z", 30)
         self.assertEqual(self.r.fresh_only([p], "2026-01-01T00:00:00Z"), [])
 
+class Resilience(unittest.TestCase):
+    def test_search_recovers_from_temporary_401(self):
+        from sayd import extra
+        from sayd.net import FetchError
+        calls = []
+
+        class Http:
+            def time_left(self):
+                return 9999
+
+            def get(self, url, **kw):
+                calls.append(url)
+                if len(calls) < 3:
+                    raise FetchError("HTTP 401", 401)
+                return "ok"
+        ex = extra.Extra(Http())
+        ex.discover = lambda: None
+        old, extra.AUTH_RETRY_WAITS = extra.AUTH_RETRY_WAITS, (0, 0, 0)
+        try:
+            self.assertEqual(ex._search("search", {}), "ok")
+            calls.clear()
+            Http.get = lambda self, url, **kw: (_ for _ in ()).throw(FetchError("HTTP 401", 401))
+            with self.assertRaises(FetchError):
+                ex._search("search", {})
+        finally:
+            extra.AUTH_RETRY_WAITS = old
+
+    def test_forbidden_page_is_not_retried_every_run(self):
+        from sayd.net import Disallowed
+        db = DB(":memory:")
+        db.observe(Product("A", "منتج", "قسم", ["1"], "https://www.extra.com/ar-sa/x/p/A", 80, None, True, False, []), at(0), 30)
+
+        class Ex:
+            def product_page(self, url):
+                raise Disallowed("robots.txt يمنع")
+        r = Runner(config.load(), db, Ex(), None, time.time() + 600)
+        self.assertIsNone(r.fetch_page("A", "u"))
+        self.assertIsNotNone(db.product("A")["pdp_checked_at"])
+
+
 if __name__ == "__main__":
     unittest.main()

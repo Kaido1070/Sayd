@@ -100,6 +100,7 @@ class Runner:
         self.parse_bad = 0
         self.pdp_ok = self.pdp_changed = 0
         self.last_error = ""
+        self.list_error = ""  # آخر خطأ في صفحات الأسعار نفسها (لرسالة التنبيه)
         self.watch = cfg["watch"]
         self.badge_skus = {}
         self.to_verify = []
@@ -132,6 +133,7 @@ class Runner:
             total, products, bad = self.ex.listing(**kw)
         except (FetchError, Disallowed) as e:
             self.pages_failed += 1
+            self.list_error = f"{context}: {e}"
             self.error(context, e)
             return None, []
         self.pages_ok += 1
@@ -381,6 +383,7 @@ class Runner:
                     self.error(item[1], item[2])
                 elif kind == "fail":
                     self.pages_failed += 1
+                    self.list_error = f"{item[1]}: {item[2]}"
                     self.error(item[1], item[2])
                 elif kind == "list":
                     self._lane_list(*item[1:])
@@ -502,6 +505,8 @@ class Runner:
             self.error(f"pdp {sku}", e)
         except (FetchError, Disallowed) as e:
             self.error(f"pdp {sku}", e)
+            if isinstance(e, Disallowed) or e.status in (404, 410):
+                self.db.mark_pdp(sku, now())  # صفحة ممنوعة أو محذوفة: لا تُعاد كل تشغيل، بل بعد مدة إعادة الفحص
         return None
 
     def pdp_scan(self):
@@ -632,7 +637,7 @@ class Runner:
         """تنبيه واحد يومياً إذا فشل الجمع بالكامل."""
         problem = None
         if self.pages_ok == 0 and self.pages_failed > 0:
-            problem = f"تعذّر جلب أي صفحة أسعار من اكسترا ({self.pages_failed} محاولة). آخر خطأ: {self.last_error}"
+            problem = f"تعذّر جلب أي صفحة أسعار من اكسترا ({self.pages_failed} محاولة). آخر خطأ: {self.list_error or self.last_error}"
         elif self.pages_ok > 0 and self.stats["seen"] == 0 and self.parse_bad > 0:
             problem = "صفحات الأسعار تصل لكن تحليل المنتجات فشل بالكامل — غالباً تغيّر شكل بيانات الموقع."
         elif self.pdp_ok == 0 and self.pdp_changed >= 5:
