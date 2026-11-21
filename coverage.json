@@ -1,0 +1,37 @@
+{
+ "generated_at": "2026-11-21T21:06:04Z",
+ "history_started_at": "2026-10-29T06:05:47Z",
+ "products_known": 37446,
+ "products_active": 35118,
+ "products_delisted": 2328,
+ "seen_last_24h": 35157,
+ "stale_not_seen_since": "2026-11-21T11:06:04Z",
+ "stale_count": 0,
+ "stale_by_dept": {},
+ "stale_sample": [],
+ "last_full_scan": {
+  "started_at": "2026-11-21T20:17:24Z",
+  "finished_at": "2026-11-21T20:36:53Z",
+  "products_seen": 60706,
+  "note": ""
+ },
+ "full_scan_in_progress": null,
+ "search_api_total_last_seen": null,
+ "sitemap": {
+  "urls": 55842,
+  "checked": 27315,
+  "dead_or_blocked": 22246,
+  "not_in_db_unchecked": 0
+ },
+ "price_periods": 99082,
+ "price_changes": 45357,
+ "deals": {
+  "active": 2099,
+  "ended": 1103
+ },
+ "errors_24h": {
+  "pdp MP00064824": 1,
+  "pdp 100315730": 1,
+  "pdp 100201837": 1
+ }
+}
