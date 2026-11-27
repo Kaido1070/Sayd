@@ -58,7 +58,11 @@ jobs:
           for b in db data; do
             if git ls-remote --exit-code --heads "$repo" "$b" >/dev/null; then
               git fetch -q --depth=1 "$repo" "$b"
-              if git archive FETCH_HEAD sayd.db | tar -x -C data; then echo "loaded from $b"; break; fi
+              # مضغوطة (sayd.db.gz)، أو بالشكل القديم غير المضغوط
+              if git archive FETCH_HEAD sayd.db.gz 2>/dev/null | tar -x -C data 2>/dev/null; then
+                gunzip -f data/sayd.db.gz; echo "loaded from $b"; break
+              fi
+              if git archive FETCH_HEAD sayd.db 2>/dev/null | tar -x -C data 2>/dev/null; then echo "loaded from $b"; break; fi
             fi
           done
 
@@ -106,7 +110,10 @@ jobs:
               && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:"$1")
           }
           if [ ! -f data/.changed ]; then echo "لا تغييرات للنشر"; exit 0; fi
-          mkdir -p out/db && cp data/sayd.db out/db/
+          # مضغوطة: GitHub يرفض أي ملف أكبر من 100 ميجا، والقاعدة تجاوزت ذلك (~20 ميجا بعد الضغط)
+          mkdir -p out/db && gzip -6 -c data/sayd.db > out/db/sayd.db.gz
+          size=$(stat -c %s out/db/sayd.db.gz)
+          if [ "$size" -gt 80000000 ]; then echo "::warning::قاعدة البيانات المضغوطة $((size / 1000000)) ميجا تقترب من حد GitHub (100)"; fi
           cp data/coverage.json out/db/ 2>/dev/null || true   # تقرير التغطية الداخلي
           publish db out/db
           # بيانات الموقع كل تشغيل في فرع live (لا يبنيه Cloudflare). جلب النسخة السابقة أولاً
